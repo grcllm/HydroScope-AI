@@ -1,0 +1,36 @@
+{
+  "session_id": "session-20250924T055406Z",
+  "started_at": "2025-09-24T05:54:06.181838+00:00",
+  "queries": [
+    {
+      "question": "P00726399LZ",
+      "answer": "=== PROJECT INFORMATION ===\nProject ID: P00726399LZ\nApproved Budget: 96500000\nMunicipality: PUDTOL (APAYAO)\nProvince: Apayao\nRegion: Cordillera Administrative Region\nContractor: TAGEL CORPORATION\nStart Date: 2023-05-05\nActual Completion: 2024-04-03\n\n=== ADDITIONAL INFORMATION ===\nMainisland: Luzon\nLegislative District: APAYAO (LEGISLATIVE DISTRICT)\nDistrictengineeringoffice: Apayao 2nd District Engineering Office\nProjectname: Construction of Apayao-Abulug River Basin Flood Control Structure, Capannikian Section, Sta. 34 + 440 - Sta. 34 + 995 (R/S), Pudtol, Apayao\nType Of Construction: Construction of Flood Mitigation Structure\nFundingyear: 2023\nContractid: 23PC0029\nContractcost: 96481880.32\nContractorcount: 1\nProjectlatitude: 18.22593\nProjectlongitude: 121.38433\nProvincialcapital: Kabugao\nProvincialcapitallatitude: 18.0215\nProvincialcapitallongitude: 121.1716\nStart Date Parsed: 2023-05-05 00:00:00\nCompletion Date Parsed: 2024-04-03 00:00:00",
+      "timestamp": "2025-09-24T05:54:14.942134+00:00"
+    },
+    {
+      "question": "what is the budget in P00726399LZ",
+      "answer": "=== PROJECT INFORMATION ===\nProject ID: P00726399LZ\nApproved Budget: 96500000\nMunicipality: PUDTOL (APAYAO)\nProvince: Apayao\nRegion: Cordillera Administrative Region\nContractor: TAGEL CORPORATION\nStart Date: 2023-05-05\nActual Completion: 2024-04-03\n\n=== ADDITIONAL INFORMATION ===\nMainisland: Luzon\nLegislative District: APAYAO (LEGISLATIVE DISTRICT)\nDistrictengineeringoffice: Apayao 2nd District Engineering Office\nProjectname: Construction of Apayao-Abulug River Basin Flood Control Structure, Capannikian Section, Sta. 34 + 440 - Sta. 34 + 995 (R/S), Pudtol, Apayao\nType Of Construction: Construction of Flood Mitigation Structure\nFundingyear: 2023\nContractid: 23PC0029\nContractcost: 96481880.32\nContractorcount: 1\nProjectlatitude: 18.22593\nProjectlongitude: 121.38433\nProvincialcapital: Kabugao\nProvincialcapitallatitude: 18.0215\nProvincialcapitallongitude: 121.1716\nStart Date Parsed: 2023-05-05 00:00:00\nCompletion Date Parsed: 2024-04-03 00:00:00",
+      "timestamp": "2025-09-24T05:54:30.987568+00:00"
+    },
+    {
+      "question": "P00726399LZ",
+      "answer": "=== PROJECT INFORMATION ===\nProject ID: P00726399LZ\nApproved Budget: 96500000\nMunicipality: PUDTOL (APAYAO)\nProvince: Apayao\nRegion: Cordillera Administrative Region\nContractor: TAGEL CORPORATION\nStart Date: 2023-05-05\nActual Completion: 2024-04-03\n\n=== ADDITIONAL INFORMATION ===\nMainisland: Luzon\nLegislative District: APAYAO (LEGISLATIVE DISTRICT)\nDistrictengineeringoffice: Apayao 2nd District Engineering Office\nProjectname: Construction of Apayao-Abulug River Basin Flood Control Structure, Capannikian Section, Sta. 34 + 440 - Sta. 34 + 995 (R/S), Pudtol, Apayao\nType Of Construction: Construction of Flood Mitigation Structure\nFundingyear: 2023\nContractid: 23PC0029\nContractcost: 96481880.32\nContractorcount: 1\nProjectlatitude: 18.22593\nProjectlongitude: 121.38433\nProvincialcapital: Kabugao\nProvincialcapitallatitude: 18.0215\nProvincialcapitallongitude: 121.1716\nStart Date Parsed: 2023-05-05 00:00:00\nCompletion Date Parsed: 2024-04-03 00:00:00",
+      "timestamp": "2025-09-24T05:54:32.937418+00:00"
+    },
+    {
+      "question": "what is the total budget in bulacan",
+      "answer": "I couldn't find any project with ID BUDGET.",
+      "timestamp": "2025-09-24T05:54:47.559576+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in apayao",
+      "answer": "I couldn't find any project with ID HIGHEST.",
+      "timestamp": "2025-09-24T05:55:29.096487+00:00"
+    },
+    {
+      "question": "exxit",
+      "answer": "Sorry — I couldn't understand the question.",
+      "timestamp": "2025-09-24T05:56:46.718946+00:00"
+    }
+  ]
+}

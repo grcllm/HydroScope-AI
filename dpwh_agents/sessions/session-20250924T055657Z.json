@@ -1,0 +1,31 @@
+{
+  "session_id": "session-20250924T055657Z",
+  "started_at": "2025-09-24T05:56:57.922361+00:00",
+  "queries": [
+    {
+      "question": "total budget in bulacan\"",
+      "answer": "The total approved budget in Bulacan is ₱43,853,057,550.22.",
+      "timestamp": "2025-09-24T05:57:05.175808+00:00"
+    },
+    {
+      "question": "total budget in apayao",
+      "answer": "The total approved budget in Apayao is ₱1,976,618,597.70.",
+      "timestamp": "2025-09-24T05:57:14.226751+00:00"
+    },
+    {
+      "question": "total budget in pampanga",
+      "answer": "The total approved budget in Pampanga is ₱14,786,967,156.92.",
+      "timestamp": "2025-09-24T05:57:19.266053+00:00"
+    },
+    {
+      "question": "total budget in rizal",
+      "answer": "The total approved budget in Rizal is ₱6,566,162,834.39.",
+      "timestamp": "2025-09-24T05:57:23.227291+00:00"
+    },
+    {
+      "question": "P00735961LZ",
+      "answer": "=== PROJECT INFORMATION ===\nProject ID: P00735961LZ\nApproved Budget: 96500000\nMunicipality: CALANASAN (BAYAG) (APAYAO)\nProvince: Apayao\nRegion: Cordillera Administrative Region\nContractor: TAGEL CORPORATION / E.C.V. CONSTRUCTION\nStart Date: 2023-04-05\nActual Completion: 2024-03-11\n\n=== ADDITIONAL INFORMATION ===\nMainisland: Luzon\nLegislative District: APAYAO (LEGISLATIVE DISTRICT)\nDistrictengineeringoffice: Apayao 2nd District Engineering Office\nProjectname: Construction of Flood Control Structure along Apayao River Basin, Namaltugan Section, Calanasan, Apayao\nType Of Construction: Construction of Flood Mitigation Structure\nFundingyear: 2023\nContractid: 23PC0046\nContractcost: 96500000\nContractorcount: 2\nProjectlatitude: 18.13243\nProjectlongitude: 121.07831\nProvincialcapital: Kabugao\nProvincialcapitallatitude: 18.0215\nProvincialcapitallongitude: 121.1716\nStart Date Parsed: 2023-04-05 00:00:00\nCompletion Date Parsed: 2024-03-11 00:00:00",
+      "timestamp": "2025-09-24T05:57:28.312875+00:00"
+    }
+  ]
+}

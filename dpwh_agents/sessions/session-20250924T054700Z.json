@@ -1,0 +1,36 @@
+{
+  "session_id": "session-20250924T054700Z",
+  "started_at": "2025-09-24T05:47:00.320887+00:00",
+  "queries": [
+    {
+      "question": "what is the total budget in apayao",
+      "answer": "I couldn't find any project with ID BUDGET.",
+      "timestamp": "2025-09-24T05:47:14.036274+00:00"
+    },
+    {
+      "question": "what is the highest budget in apayao",
+      "answer": "I couldn't find any project with ID HIGHEST.",
+      "timestamp": "2025-09-24T05:47:28.826097+00:00"
+    },
+    {
+      "question": "highest approved budget in bulacan",
+      "answer": "I couldn't find any project with ID HIGHEST.",
+      "timestamp": "2025-09-24T05:47:41.179032+00:00"
+    },
+    {
+      "question": "how many projects in manila",
+      "answer": "There are 9827 flood control projects in Manila.",
+      "timestamp": "2025-09-24T05:47:48.399471+00:00"
+    },
+    {
+      "question": "how many projects in apayao",
+      "answer": "There are 34 flood control projects in Apayao.",
+      "timestamp": "2025-09-24T05:47:55.504489+00:00"
+    },
+    {
+      "question": "how many projects in antipolo",
+      "answer": "There are 9827 flood control projects in Antipolo.",
+      "timestamp": "2025-09-24T05:47:58.914321+00:00"
+    }
+  ]
+}

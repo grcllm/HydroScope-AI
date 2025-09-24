@@ -1,0 +1,26 @@
+{
+  "session_id": "session-20250924T052806Z",
+  "started_at": "2025-09-24T05:28:06.637448+00:00",
+  "queries": [
+    {
+      "question": "22PB0005",
+      "answer": "I couldn't find any project with ID 22PB0005.",
+      "timestamp": "2025-09-24T05:28:26.325226+00:00"
+    },
+    {
+      "question": "P00561270LZ",
+      "answer": "=== PROJECT INFORMATION ===\nProject ID: P00561270LZ\nApproved Budget: 9900000\nProvince: Apayao\nRegion: Cordillera Administrative Region\nContractor: ASC CONSTRUCTION & CONCRETE PRODUCTS\nStart Date: 2021-12-01\nActual Completion: 2022-12-15\n\n=== ADDITIONAL INFORMATION ===\nMainisland: Luzon\nLegislative District: APAYAO (LEGISLATIVE DISTRICT)\nDistrictengineeringoffice: Apayao 2nd District Engineering Office\nProjectname: Construction of Sta. Filomena Floodway/ Flood Control Structure, Sta. Filomena, Calanasan, Apayao\nType Of Construction: Construction of Flood Mitigation Structure\nFundingyear: 2021\nContractid: 21PC0067\nContractcost: 9900000\nContractorcount: 1\nProjectlatitude: 18.53566\nProjectlongitude: 121.0802\nProvincialcapital: Kabugao\nProvincialcapitallatitude: 18.0215\nProvincialcapitallongitude: 121.1716\nStart Date Parsed: 2021-12-01 00:00:00\nCompletion Date Parsed: 2022-12-15 00:00:00",
+      "timestamp": "2025-09-24T05:28:31.658029+00:00"
+    },
+    {
+      "question": "total number of project control projects in cavite",
+      "answer": "Sorry — I couldn't understand the question.",
+      "timestamp": "2025-09-24T05:28:53.574508+00:00"
+    },
+    {
+      "question": "total number of project control projects in cavitar",
+      "answer": "Sorry — I couldn't understand the question.",
+      "timestamp": "2025-09-24T05:39:33.985895+00:00"
+    }
+  ]
+}
