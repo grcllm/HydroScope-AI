@@ -1,0 +1,11 @@
+{
+  "session_id": "session-20250925T144924Z",
+  "started_at": "2025-09-25T14:49:24.368657+00:00",
+  "queries": [
+    {
+      "question": "P00620472LZ",
+      "answer": "=== PROJECT INFORMATION ===\nProject ID: P00620472LZ\nApproved Budget: 15678924.68\nMunicipality: CONNER (APAYAO)\nProvince: Apayao\nRegion: Cordillera Administrative Region\nContractor: BAHRAMLEY CONSTRUCTION\nStart Date: 2022-03-01\nActual Completion: 2022-12-22\n\n=== ADDITIONAL INFORMATION ===\nMainisland: Luzon\nLegislative District: APAYAO (LEGISLATIVE DISTRICT)\nDistrictengineeringoffice: Apayao 1st District Engineering Office\nProjectname: Construction of Barren River (Upstream) Flood Control Structure, Sta. 39 + 693 - Sta. 39 + 893 (R/S), Brgy. Ili, Conner, Apayao\nType Of Construction: Construction of Flood Mitigation Structure\nFundingyear: 2022\nContractid: 22PB0004\nContractcost: 15680000\nContractorcount: 1\nProjectlatitude: 17.82388889\nProjectlongitude: 121.2677778\nProvincialcapital: Kabugao\nProvincialcapitallatitude: 18.0215\nProvincialcapitallongitude: 121.1716\nStart Date Parsed: 2022-03-01 00:00:00\nCompletion Date Parsed: 2022-12-22 00:00:00",
+      "timestamp": "2025-09-25T14:49:33.774584+00:00"
+    }
+  ]
+}

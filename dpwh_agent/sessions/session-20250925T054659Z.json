@@ -1,0 +1,76 @@
+{
+  "session_id": "session-20250925T054659Z",
+  "started_at": "2025-09-25T05:46:59.925803+00:00",
+  "queries": [
+    {
+      "question": "P00526270LZ",
+      "answer": "=== PROJECT INFORMATION ===\nProject ID: P00526270LZ\nApproved Budget: 82914680\nProvince: Apayao\nRegion: Cordillera Administrative Region\nContractor: ASC CONSTRUCTION & CONCRETE PRODUCTS\nStart Date: 2021-12-22\nActual Completion: 2023-04-14\n\n=== ADDITIONAL INFORMATION ===\nMainisland: Luzon\nLegislative District: APAYAO (LEGISLATIVE DISTRICT)\nDistrictengineeringoffice: Apayao 1st District Engineering Office\nProjectname: Construction of Nabuangan (Upstream) Flood Control, Sta. 38 + 997 - Sta. 39 + 447 (B/S), Brgy. Caglayan, Conner, Apayao\nType Of Construction: Construction of Flood Mitigation Structure\nFundingyear: 2021\nContractid: 21PB0013\nContractcost: 80309010.27\nContractorcount: 1\nProjectlatitude: 17.800278\nProjectlongitude: 121.308889\nProvincialcapital: Kabugao\nProvincialcapitallatitude: 18.0215\nProvincialcapitallongitude: 121.1716\nStart Date Parsed: 2021-12-22 00:00:00\nCompletion Date Parsed: 2023-04-14 00:00:00",
+      "timestamp": "2025-09-25T05:47:08.293677+00:00"
+    },
+    {
+      "question": "what is the budget of P00526270LZ",
+      "answer": "The approved budget for Project ID P00526270LZ is 82914680.",
+      "timestamp": "2025-09-25T05:47:17.230360+00:00"
+    },
+    {
+      "question": "how many flood control projects in CONNER (APAYAO)",
+      "answer": "There are 6 flood control projects in Municipality Of Conner (Apayao), Province Of Apayao.",
+      "timestamp": "2025-09-25T05:47:49.669439+00:00"
+    },
+    {
+      "question": "how many flood control projects in BAGUIO CITY (BENGUET)",
+      "answer": "There are 12 flood control projects in Municipality Of Baguio City (Benguet), Province Of Benguet.",
+      "timestamp": "2025-09-25T05:48:02.508128+00:00"
+    },
+    {
+      "question": "what is the highest budget in ITOGON (BENGUET)",
+      "answer": "In Municipality Of Itogon (Benguet), Province Of Benguet: The project with the highest budget is Project ID P00821130LZ in ITOGON (BENGUET) with ₱59,830,000.00.",
+      "timestamp": "2025-09-25T05:48:28.636882+00:00"
+    },
+    {
+      "question": "what is the lowest budget in ITOGON (BENGUET)",
+      "answer": "Sorry — I couldn't understand the question.",
+      "timestamp": "2025-09-25T05:48:38.509802+00:00"
+    },
+    {
+      "question": "How many projects contractor have ASC CONSTRUCTION & CONCRETE PRODUCTS",
+      "answer": "ASC CONSTRUCTION & CONCRETE PRODUCTS has 20 flood control projects.",
+      "timestamp": "2025-09-25T05:48:56.304196+00:00"
+    },
+    {
+      "question": "How many projects contractor have ALEPHNORTH PEAK CONSTRUCTION AND DEVELOPMENT CO.",
+      "answer": "ALEPHNORTH PEAK CONSTRUCTION AND DEVELOPMENT CO. has 1 flood control projects.",
+      "timestamp": "2025-09-25T05:49:28.720825+00:00"
+    },
+    {
+      "question": "How many projects contractor have ASC CONSTRUCTION & CONCRETE PRODUCTS",
+      "answer": "ASC CONSTRUCTION & CONCRETE PRODUCTS has 20 flood control projects.",
+      "timestamp": "2025-09-25T05:49:48.315144+00:00"
+    },
+    {
+      "question": "How many projects contractor have ST. TIMOTHY CONSTRUCTION CORPORATION",
+      "answer": "ST. TIMOTHY CONSTRUCTION CORPORATION has 83 flood control projects.",
+      "timestamp": "2025-09-25T05:50:19.651796+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in CITY OF PARAÃ‘AQUE (METROPOLITAN MANILA)",
+      "answer": "The project with the highest budget is Project ID P00734376MN in NORALA (SOUTH COTABATO) with ₱310,576,313.24.",
+      "timestamp": "2025-09-25T05:50:56.498441+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in TAGUIG CITY (METROPOLITAN MANILA)",
+      "answer": "In Municipality Of Taguig City (Metropolitan Manila): The project with the highest budget is Project ID P00821069LZ in TAGUIG CITY (METROPOLITAN MANILA) with ₱144,749,873.51.",
+      "timestamp": "2025-09-25T05:51:15.231396+00:00"
+    },
+    {
+      "question": "who is the contractor of P00821069LZ",
+      "answer": "The contractor for Project ID P00821069LZ is TOPNOTCH CATALYST BUILDERS INC. / BEAM TEAM DEVELOPER SPECIALIST INC..",
+      "timestamp": "2025-09-25T05:51:28.380549+00:00"
+    },
+    {
+      "question": "P00821069LZ",
+      "answer": "=== PROJECT INFORMATION ===\nProject ID: P00821069LZ\nApproved Budget: 144749873.51\nMunicipality: TAGUIG CITY (METROPOLITAN MANILA)\nProvince: Metro Manila\nRegion: National Capital Region\nContractor: TOPNOTCH CATALYST BUILDERS INC. / BEAM TEAM DEVELOPER SPECIALIST INC.\nStart Date: 2024-05-29\nActual Completion: 2025-01-07\n\n=== ADDITIONAL INFORMATION ===\nMainisland: Luzon\nLegislative District: TAGUIG CITY (FIRST LEGISLATIVE DISTRICT)\nDistrictengineeringoffice: Metro Manila 1st District Engineering Office\nProjectname: Construction of Slope Protection at Lakeshore, Barangay Hagonoy, Taguig City\nType Of Construction: Construction of Slope Protection Structure\nFundingyear: 2024\nContractid: 24OB0186\nContractcost: 141782501.1\nContractorcount: 2\nProjectlatitude: 14.50508307\nProjectlongitude: 121.06902961\nProvincialcapital: City of Manila\nProvincialcapitallatitude: 14.5995\nProvincialcapitallongitude: 120.9842\nStart Date Parsed: 2024-05-29 00:00:00\nCompletion Date Parsed: 2025-01-07 00:00:00",
+      "timestamp": "2025-09-25T05:51:34.739630+00:00"
+    }
+  ]
+}

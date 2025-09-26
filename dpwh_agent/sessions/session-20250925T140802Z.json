@@ -1,0 +1,16 @@
+{
+  "session_id": "session-20250925T140802Z",
+  "started_at": "2025-09-25T14:08:02.143276+00:00",
+  "queries": [
+    {
+      "question": "what is the highest budget in apayao",
+      "answer": "In Province Of Apayao: The project with the highest budget is Project ID P00740313LZ in CONNER (APAYAO) with ₱115,793,907.83.",
+      "timestamp": "2025-09-25T14:09:05.813552+00:00"
+    },
+    {
+      "question": "what is the highest budget in conner",
+      "answer": "The project with the highest budget is Project ID P00734376MN in NORALA (SOUTH COTABATO) with ₱310,576,313.24.",
+      "timestamp": "2025-09-25T14:09:13.829072+00:00"
+    }
+  ]
+}
