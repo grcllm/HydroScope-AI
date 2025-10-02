@@ -14,7 +14,17 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, str]:
     """Detect filters (region/province/municipality/island/project_location) from user prompt."""
     p = prompt.lower()
     filters = {}
-
+    
+    # Region IV-A / IV-B pattern
+    m = re.search(r"region\s*(?:iv-?|4)?\s*[–-]?\s*([ab])", p)
+    if m:
+        subregion = m.group(1).lower()
+        if subregion == 'a':
+            filters["region"] = "iv-a"  # or "calabarzon"
+        elif subregion == 'b':
+            filters["region"] = "iv-b"  # or "mimaropa"
+        return filters
+    
     # Region pattern
     m = re.search(r"region\s*([0-9ivx]+)", p)
     if m:
@@ -107,6 +117,11 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
     if "highest approved budget" in p or "max approved budget" in p or "highest budget" in p:
         filters = detect_filters(prompt, df)
         return {"action": "max", "column": "approved_budget_num", "filters": filters}
+    
+    # Lowest budget pattern
+    if "lowest approved budget" in p or "minimum approved budget" in p or "lowest budget" in p or "min approved budget" in p:
+        filters = detect_filters(prompt, df)
+        return {"action": "min", "column": "approved_budget_num", "filters": filters}
 
     # Total budget pattern - CHECK SECOND  
     if "total budget" in p or "sum" in p or "overall budget" in p:
@@ -119,21 +134,23 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
 
         # Special handling for contractor queries
         if "contractor" in p and not filters:
-            # Try to extract contractor name from patterns like:
-            # "how many projects contractor have [name]" or "how many projects does [name] have"
+            # Enhanced patterns to catch more variations
             contractor_patterns = [
                 r"how many projects.*contractor.*have\s+(.+)$",
                 r"how many projects.*does\s+(.+?)\s+have",
                 r"how many projects.*by\s+(.+)$",
-                r"how many projects.*from\s+(.+)$"
+                r"how many projects.*from\s+(.+)$",
+                r"how many projects\s+(.+?)\s+(?:does|do)\s+have",  # ✅ NEW: "projects X does have"
+                r"contractor\s+have\s+(.+?)(?:\?|$)",  # ✅ NEW: "contractor have X"
             ]
             
             for pattern in contractor_patterns:
                 match = re.search(pattern, p)
                 if match:
                     contractor_name = match.group(1).strip()
-                    # Clean up the contractor name (remove common words)
-                    contractor_name = re.sub(r'\b(contractor|company|corp|inc|ltd)\b', '', contractor_name, flags=re.IGNORECASE).strip()
+                    # Clean up the contractor name (remove common words and punctuation)
+                    contractor_name = re.sub(r'\b(contractor|company|corp|inc|ltd|does|have)\b', '', contractor_name, flags=re.IGNORECASE).strip()
+                    contractor_name = contractor_name.rstrip('.,;:!?')  # ✅ Remove trailing punctuation
                     
                     # Find matching contractor in the dataset
                     if "contractor" in df.columns:
@@ -143,8 +160,34 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
                                 filters = {"contractor": contractor}
                                 break
                     break
+        
+        # ✅ NEW: Fallback - if still no filters but contractor name appears in prompt
+        if not filters and "contractor" in df.columns:
+            # Try to extract any capitalized words that might be contractor name
+            words = prompt.split()
+            # Look for sequences of uppercase words (likely contractor names)
+            for i, word in enumerate(words):
+                if word.isupper() or (word[0].isupper() and len(word) > 2):
+                    # Build potential contractor name from consecutive uppercase words
+                    potential_name = []
+                    for j in range(i, len(words)):
+                        if words[j].isupper() or (words[j][0].isupper() and words[j].lower() not in ['have', 'does', 'do', 'the', 'of']):
+                            potential_name.append(words[j].rstrip('.,;:!?'))
+                        else:
+                            break
+                    
+                    if potential_name:
+                        contractor_name = ' '.join(potential_name)
+                        # Search in dataset
+                        contractors = df["contractor"].dropna().unique()
+                        for contractor in contractors:
+                            if pd.notna(contractor) and contractor_name.lower() in str(contractor).lower():
+                                filters = {"contractor": contractor}
+                                break
+                        if filters:
+                            break
 
-        # 🔥 Always capture "in X" as filter (even if detect_filters misses it)
+        # Always capture "in X" as filter (even if detect_filters misses it)
         if not filters:
             m2 = re.search(r"in\s+([a-z\s\-]+)$", p)
             if m2:
@@ -211,8 +254,21 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
         if k == "region" and "region" in out.columns:
             pat = v.lower()
             patterns = [pat]
+            
+            # Handle roman numerals
             if pat.isdigit() and pat in ROMAN_MAP:
                 patterns.append(ROMAN_MAP[pat])
+            
+            # Special handling for Region 4 - match both 4A and 4B
+            if pat in ['4', 'iv']:
+                patterns.extend(['iv-a', 'iv-b', '4a', '4b', 'calabarzon', 'mimaropa'])
+            
+            # For 4a/4b specific queries
+            if pat in ['4a', 'iv-a']:
+                patterns.extend(['iv-a', '4a', 'calabarzon', 'region iv-a', "4-a"])
+            if pat in ['4b', 'iv-b']:
+                patterns.extend(['iv-b', '4b', 'mimaropa', 'region iv-b', "4-b"])
+            
             mask = False
             for p in patterns:
                 mask = mask | out["region"].astype(str).str.lower().str.contains(p, na=False)
@@ -504,6 +560,45 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             place_description = ", ".join(place_parts) if place_parts else list(filters.values())[0]
             return f"The total approved budget in {place_description.title()} is ₱{total:,.2f}."
         return f"The total approved budget for all projects is ₱{total:,.2f}."
+    
+    # Minimum budget
+    if action == "min" and parsed["column"]:
+        budget_cols = ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost']
+        budget_col = None
+        for col in budget_cols:
+            if col in sub.columns:
+                budget_col = col
+                break
+        
+        if budget_col is None:
+            return "I couldn't find a budget column in the dataset."
+        
+        if sub.empty:
+            return "I couldn't find any matching projects for your request."
+        
+        row = sub.loc[sub[budget_col].idxmin()]
+        
+        # Find project ID column
+        project_id_col = find_project_id_column(df)
+        pid = row[project_id_col] if project_id_col in row else "Unknown ID"
+        
+        # Figure out what table / filter matched (Municipality, Province, etc.)
+        place_parts = []
+        if "municipality" in filters:
+            place_parts.append(f"Municipality of {filters['municipality']}")
+        if "province" in filters:
+            place_parts.append(f"Province of {filters['province']}")
+        if "region" in filters:
+            place_parts.append(f"Region {filters['region']}")
+        if "mainisland" in filters:
+            place_parts.append(filters['mainisland'].title())
+        if "project_location" in filters:
+            place_parts.append(filters['project_location'])
+        
+        place_description = ", ".join(place_parts) if place_parts else "the dataset"
+        
+        return (f"In {place_description}: The project with the lowest approved budget "
+                f"is Project ID {pid} with ₱{row[budget_col]:,.2f}.")
 
     # Max budget
     if action == "max" and parsed["column"]:

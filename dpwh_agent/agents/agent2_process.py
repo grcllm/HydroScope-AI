@@ -13,21 +13,21 @@ def parse_currency(x):
 def agent2_run(filepath: Path):
     df = pd.read_csv(filepath, dtype=str)
 
-    # Normalize column names
+    # Columns are already normalized by agent1, so just strip/lowercase
     df.columns = df.columns.str.strip().str.lower()
 
     # Region cleaning
     if "region" in df.columns:
         df["region"] = df["region"].str.strip().str.title()
 
-    # Map Kaggle schema → expected names
+    # Map normalized column names → expected names
     rename_map = {
-        "approvedbudgetforcontract": "approved_budget",
-        "startdate": "start_date",
-        "actualcompletiondate": "completion_date",
-        "projectid": "project_id",
-        "typeofwork": "type_of_construction",
-        "legislativedistrict": "legislative_district",
+        "approved_budget_for_contract": "approved_budget",  # ✅ Fixed: matches normalized name
+        "start_date": "start_date",
+        "actual_completion_date": "completion_date",
+        "project_id": "project_id",
+        "type_of_work": "type_of_construction",
+        "legislative_district": "legislative_district",
     }
     df.rename(columns={k:v for k,v in rename_map.items() if k in df.columns}, inplace=True)
 

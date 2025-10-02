@@ -1,0 +1,71 @@
+{
+  "session_id": "session-20251002T073708Z",
+  "started_at": "2025-10-02T07:37:08.283120+00:00",
+  "queries": [
+    {
+      "question": "how many projects are in region 4a",
+      "answer": "There are 828 flood control projects in Region Iv-A.",
+      "timestamp": "2025-10-02T07:37:17.659469+00:00"
+    },
+    {
+      "question": "how many projects are in region 4b",
+      "answer": "There are 498 flood control projects in Region Iv-B.",
+      "timestamp": "2025-10-02T07:37:20.978233+00:00"
+    },
+    {
+      "question": "how many projects are in region 4",
+      "answer": "There are 1678 flood control projects in Region 4.",
+      "timestamp": "2025-10-02T07:37:24.424170+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in 4a",
+      "answer": "The project with the highest budget is Project ID P00734376MN in NORALA, SOUTH COTABATO with ₱310,576,313.24.",
+      "timestamp": "2025-10-02T07:38:11.646514+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in 4-a",
+      "answer": "The project with the highest budget is Project ID P00734376MN in NORALA, SOUTH COTABATO with ₱310,576,313.24.",
+      "timestamp": "2025-10-02T07:38:22.538267+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in region 4",
+      "answer": "In Region 4: The project with the highest budget is Project ID P00825118LZ in SABLAYAN, OCCIDENTAL MINDORO with ₱289,499,999.99.",
+      "timestamp": "2025-10-02T07:38:54.282744+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in Region 4",
+      "answer": "In Region 4: The project with the highest budget is Project ID P00825118LZ in SABLAYAN, OCCIDENTAL MINDORO with ₱289,499,999.99.",
+      "timestamp": "2025-10-02T07:39:05.709808+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in Region 3",
+      "answer": "In Region 3: The project with the highest budget is Project ID P00721328MN in BUTUAN CITY (CAPITAL), AGUSAN DEL NORTE with ₱289,500,000.00.",
+      "timestamp": "2025-10-02T07:39:07.838544+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in Region 5",
+      "answer": "In Region 5: The project with the highest budget is Project ID P00825118LZ in SABLAYAN, OCCIDENTAL MINDORO with ₱289,499,999.99.",
+      "timestamp": "2025-10-02T07:39:11.070178+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in Region 4",
+      "answer": "In Region 4: The project with the highest budget is Project ID P00825118LZ in SABLAYAN, OCCIDENTAL MINDORO with ₱289,499,999.99.",
+      "timestamp": "2025-10-02T07:39:16.986515+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in Region 4-A",
+      "answer": "In Region Iv-A: The project with the highest budget is Project ID P00525632LZ in Cavite with ₱244,145,000.00.",
+      "timestamp": "2025-10-02T07:39:22.896914+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in Region 4-B",
+      "answer": "In Region Iv-B: The project with the highest budget is Project ID P00825118LZ in SABLAYAN, OCCIDENTAL MINDORO with ₱289,499,999.99.",
+      "timestamp": "2025-10-02T07:39:25.940973+00:00"
+    },
+    {
+      "question": "what is the highest approved budget in Region 4-B",
+      "answer": "In Region Iv-B: The project with the highest budget is Project ID P00825118LZ in SABLAYAN, OCCIDENTAL MINDORO with ₱289,499,999.99.",
+      "timestamp": "2025-10-02T07:39:40.274477+00:00"
+    }
+  ]
+}
