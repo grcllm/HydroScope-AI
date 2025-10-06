@@ -2,7 +2,6 @@ from typing import Dict
 import pandas as pd
 import re
 
-# Mapping digits → roman numerals for regions
 ROMAN_MAP = {
     "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v",
     "6": "vi", "7": "vii", "8": "viii", "9": "ix", "10": "x",
@@ -14,98 +13,70 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, str]:
     """Detect filters (region/province/municipality/island/project_location) from user prompt."""
     p = prompt.lower()
     filters = {}
-    
+
     # Region IV-A / IV-B pattern
     m = re.search(r"region\s*(?:iv-?|4)?\s*[–-]?\s*([ab])", p)
     if m:
         subregion = m.group(1).lower()
-        if subregion == 'a':
-            filters["region"] = "iv-a"  # or "calabarzon"
-        elif subregion == 'b':
-            filters["region"] = "iv-b"  # or "mimaropa"
+        filters["region"] = "iv-a" if subregion == 'a' else "iv-b"
+        return filters
+
+    # NCR pattern (check FIRST before other patterns)
+    if re.search(r"\bncr\b|national capital region|metro manila|ncr", p):
+        filters["region"] = "National Capital Region"
         return filters
     
-    # Region pattern
+    # Cordillera pattern (check FIRST before other patterns)  
+    if re.search(r"\bcar\b|cordillera|cordillera administrative region|car", p):
+        filters["region"] = "Cordillera Administrative Region"
+        return filters
+
+    # Standard region pattern (handles both roman and numeric)
     m = re.search(r"region\s*([0-9ivx]+)", p)
     if m:
-        filters["region"] = m.group(1)
+        region_str = m.group(1).lower()
+        filters["region"] = region_str  # Store what user typed - apply_filters handles matching
         return filters
 
     # Island keywords
     for island in ["luzon", "visayas", "mindanao"]:
-        if island in p and "mainisland" in df.columns:
-            filters["mainisland"] = island
+        if island in p and "main_island" in df.columns:  # Changed from "mainisland"
+            filters["main_island"] = island  # Changed from "mainisland"
             return filters
 
-    # Enhanced Municipality detection with better matching
+    # Municipality detection
     if "municipality" in df.columns:
-        municipalities = df["municipality"].dropna().unique()
-        municipalities = [str(m).strip() for m in municipalities if pd.notna(m) and str(m).strip()]
-        
-        # Sort by length (longest first) to match more specific names first
-        municipalities = sorted(municipalities, key=len, reverse=True)
-        
+        municipalities = sorted(df["municipality"].dropna().astype(str).unique(), key=len, reverse=True)
         for muni in municipalities:
             muni_lower = muni.lower()
-            # Check if municipality name appears in the prompt
-            # Try exact word match first, then contains
-            if (f" {muni_lower} " in f" {p} " or 
-                p.startswith(muni_lower + " ") or 
-                p.endswith(" " + muni_lower) or
-                p == muni_lower or
-                muni_lower in p):
-                
+            if muni_lower in p:
                 filters["municipality"] = muni
-                
-                # Also try to find province if mentioned
                 if "province" in df.columns:
-                    provinces = df["province"].dropna().unique()
-                    provinces = [str(prov).strip() for prov in provinces if pd.notna(prov) and str(prov).strip()]
-                    
+                    provinces = sorted(df["province"].dropna().astype(str).unique(), key=len, reverse=True)
                     for prov in provinces:
-                        prov_lower = prov.lower()
-                        if (f" {prov_lower} " in f" {p} " or 
-                            p.startswith(prov_lower + " ") or 
-                            p.endswith(" " + prov_lower) or
-                            p == prov_lower or
-                            prov_lower in p):
+                        if prov.lower() in p:
                             filters["province"] = prov
                             break
                 return filters
 
-    # Province (only if no municipality found)
+    # Province detection (if no municipality)
     if not filters and "province" in df.columns:
-        provinces = df["province"].dropna().unique()
-        provinces = [str(p).strip() for p in provinces if pd.notna(p) and str(p).strip()]
-        provinces = sorted(provinces, key=len, reverse=True)
-        
+        provinces = sorted(df["province"].dropna().astype(str).unique(), key=len, reverse=True)
         for prov in provinces:
-            prov_lower = prov.lower()
-            if (f" {prov_lower} " in f" {p} " or 
-                p.startswith(prov_lower + " ") or 
-                p.endswith(" " + prov_lower) or
-                p == prov_lower or
-                prov_lower in p):
+            if prov.lower() in p:
                 filters["province"] = prov
                 return filters
 
-    # Enhanced fallback: project_location catch-all with better matching
+    # Fallback: project_location
     if "project_location" in df.columns:
-        locations = df["project_location"].dropna().unique()
-        locations = [str(l).strip() for l in locations if pd.notna(l) and str(l).strip()]
-        locations = sorted(locations, key=len, reverse=True)
-        
+        locations = sorted(df["project_location"].dropna().astype(str).unique(), key=len, reverse=True)
         for loc in locations:
-            loc_lower = loc.lower()
-            if (f" {loc_lower} " in f" {p} " or 
-                p.startswith(loc_lower + " ") or 
-                p.endswith(" " + loc_lower) or
-                p == loc_lower or
-                loc_lower in p):
+            if loc.lower() in p:
                 filters["project_location"] = loc
                 return filters
 
     return filters
+
 
 
 def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
@@ -114,17 +85,20 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
     # 🔎 PRIORITY ORDER: Check statistical queries FIRST before project ID detection
 
     # Highest budget pattern - CHECK FIRST
-    if "highest approved budget" in p or "max approved budget" in p or "highest budget" in p:
+    highest_keywords: list[str] = ["highest approved budget", "max approved budget", "highest budget", "max budget", "largest budget", "biggest budget"]
+    if any(keyword in p for keyword in highest_keywords):
         filters = detect_filters(prompt, df)
         return {"action": "max", "column": "approved_budget_num", "filters": filters}
     
     # Lowest budget pattern
-    if "lowest approved budget" in p or "minimum approved budget" in p or "lowest budget" in p or "min approved budget" in p:
+    lowest_keywords: list[str] = ["lowest approved budget", "min approved budget", "minimum approved budget", "lowest budget", "minimum budget", "least budget"]
+    if any(keyword in p for keyword in lowest_keywords):
         filters = detect_filters(prompt, df)
         return {"action": "min", "column": "approved_budget_num", "filters": filters}
 
-    # Total budget pattern - CHECK SECOND  
-    if "total budget" in p or "sum" in p or "overall budget" in p:
+    # Total budget pattern - CHECK SECOND
+    total_keywords: list[str] = ["total budget", "sum", "overall budget"]
+    if any(keyword in p for keyword in total_keywords):
         filters = detect_filters(prompt, df)
         return {"action": "sum", "column": "approved_budget_num", "filters": filters}
 
@@ -253,40 +227,62 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
 
         if k == "region" and "region" in out.columns:
             pat = v.lower()
-            patterns = [pat]
+            patterns = []
             
-            # Handle roman numerals
-            if pat.isdigit() and pat in ROMAN_MAP:
-                patterns.append(ROMAN_MAP[pat])
+            # If input is a digit (e.g., "2" or "3"), convert to roman and add "region" prefix
+            if pat.isdigit():
+                roman = ROMAN_MAP.get(pat, pat)
+                patterns.extend([
+                    f"region {roman}",      # "region ii"
+                    f"region {pat}",         # "region 2"
+                ])
+            # If input is already roman (e.g., "ii" or "iii")
+            elif pat in ROMAN_MAP.values():
+                patterns.extend([
+                    f"region {pat}",         # "region ii"
+                ])
+            else:
+                patterns.append(pat)
             
-            # Special handling for Region 4 - match both 4A and 4B
+            # Special handling for Region 4/IV
             if pat in ['4', 'iv']:
-                patterns.extend(['iv-a', 'iv-b', '4a', '4b', 'calabarzon', 'mimaropa'])
+                patterns.extend([
+                    'region iv-a', 'region iv-b',
+                    'region 4-a', 'region 4-b',
+                    'calabarzon', 'mimaropa'
+                ])
             
-            # For 4a/4b specific queries
             if pat in ['4a', 'iv-a']:
-                patterns.extend(['iv-a', '4a', 'calabarzon', 'region iv-a', "4-a"])
+                patterns.extend(['region iv-a', 'region 4-a', 'calabarzon'])
             if pat in ['4b', 'iv-b']:
-                patterns.extend(['iv-b', '4b', 'mimaropa', 'region iv-b', "4-b"])
+                patterns.extend(['region iv-b', 'region 4-b', 'mimaropa'])
             
+            # Build mask with EXACT matching after "region " prefix
             mask = False
             for p in patterns:
-                mask = mask | out["region"].astype(str).str.lower().str.contains(p, na=False)
+                # Use word boundary or exact space matching to prevent partial matches
+                if p.startswith('region '):
+                    # Match "Region II" but not "Region III"
+                    current_mask = out["region"].astype(str).str.lower().str.match(f"^{re.escape(p)}$|^{re.escape(p)}\s")
+                else:
+                    current_mask = out["region"].astype(str).str.lower() == p
+                mask = mask | current_mask
+            
+            out = out[mask]
+            
+        elif k == "main_island" and "main_island" in out.columns:
+            mask = out["main_island"].astype(str).str.lower() == v.lower()
             out = out[mask]
 
         elif k in out.columns:
             if pd.api.types.is_string_dtype(out[k]):
-                # Enhanced matching for string columns
-                # First try exact match (case-insensitive)
                 mask = out[k].astype(str).str.strip().str.lower() == v.lower()
                 
-                # If no exact matches, try contains match for partial matches
                 if not mask.any():
                     mask = out[k].astype(str).str.lower().str.contains(v.lower(), na=False)
                 
                 out = out[mask]
             else:
-                # For non-string columns, use exact match
                 out = out[out[k] == v]
 
     return out
