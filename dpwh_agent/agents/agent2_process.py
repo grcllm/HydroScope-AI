@@ -22,7 +22,7 @@ def agent2_run(filepath: Path):
 
     # Map normalized column names → expected names
     rename_map = {
-        "approved_budget_for_contract": "approved_budget",  # ✅ Fixed: matches normalized name
+        "approved_budget_for_contract": "approved_budget",
         "start_date": "start_date",
         "actual_completion_date": "completion_date",
         "project_id": "project_id",

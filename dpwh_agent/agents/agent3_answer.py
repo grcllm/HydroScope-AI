@@ -1,6 +1,7 @@
 from typing import Dict
 import pandas as pd
 import re
+import unicodedata
 
 ROMAN_MAP = {
     "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v",
@@ -9,9 +10,50 @@ ROMAN_MAP = {
     "16": "xvi", "17": "xvii", "18": "xviii"
 }
 
+# ---------- Column resolution utilities ----------
+def _norm_colname(name: str) -> str:
+    """Normalize a column or candidate name for case-insensitive matching.
+    Lowercase and drop non-alphanumeric characters (e.g., 'ApprovedBudgetForContract' -> 'approvedbudgetforcontract')."""
+    return re.sub(r"[^a-z0-9]", "", str(name).lower())
+
+def find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    """Return the first DataFrame column matching any candidate (case/format-insensitive)."""
+    if df is None or not hasattr(df, 'columns'):
+        return None
+    norm_map = {_norm_colname(c): c for c in df.columns}
+    for cand in candidates:
+        key = _norm_colname(cand)
+        if key in norm_map:
+            return norm_map[key]
+    # try partial contains fallback
+    for cand in candidates:
+        key = _norm_colname(cand)
+        for col in df.columns:
+            if key and key in _norm_colname(col):
+                return col
+    return None
+
 def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, str]:
     """Detect filters (region/province/municipality/island/project_location) from user prompt."""
     p = prompt.lower()
+    
+    def _normalize_text(s: str) -> str:
+        """Lowercase, remove accents/diacritics, collapse spaces and drop generic prefixes like 'city of'."""
+        if not isinstance(s, str):
+            return ""
+        # remove accents
+        s_norm = unicodedata.normalize('NFKD', s)
+        s_ascii = s_norm.encode('ascii', 'ignore').decode('ascii')
+        s_ascii = s_ascii.lower()
+        # remove common prefixes and stopwords around LGUs
+        s_ascii = re.sub(r"\b(city of|municipality of|municipality|city)\b", " ", s_ascii)
+        # keep letters, numbers and spaces
+        s_ascii = re.sub(r"[^a-z0-9\s\-]", " ", s_ascii)
+        s_ascii = re.sub(r"[\-]", " ", s_ascii)
+        s_ascii = re.sub(r"\s+", " ", s_ascii).strip()
+        return s_ascii
+
+    p_norm = _normalize_text(prompt)
     filters = {}
 
     # Region IV-A / IV-B pattern
@@ -39,37 +81,70 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, str]:
         return filters
 
     # Island keywords
+    main_island_col = find_column(df, ["main_island", "mainisland", "main island"])
     for island in ["luzon", "visayas", "mindanao"]:
-        if island in p and "main_island" in df.columns:  # Changed from "mainisland"
-            filters["main_island"] = island  # Changed from "mainisland"
+        if island in p and main_island_col is not None:
+            filters["main_island"] = island
             return filters
 
-    # Municipality detection
-    if "municipality" in df.columns:
-        municipalities = sorted(df["municipality"].dropna().astype(str).unique(), key=len, reverse=True)
+    # Municipality detection (diacritic-insensitive; allow prompts like "paranaque" to match "CITY OF PARAÑAQUE")
+    muni_col = find_column(df, ["municipality", "city"])
+    if muni_col is not None:
+        municipalities = df[muni_col].dropna().astype(str).unique()
+        # Build normalized lookup: longest names first to avoid partial collisions
+        norm_map = []  # list of tuples (norm_name, tokens, canonical)
         for muni in municipalities:
-            muni_lower = muni.lower()
-            if muni_lower in p:
-                filters["municipality"] = muni
-                if "province" in df.columns:
-                    provinces = sorted(df["province"].dropna().astype(str).unique(), key=len, reverse=True)
-                    for prov in provinces:
-                        if prov.lower() in p:
-                            filters["province"] = prov
+            canon = muni.strip()
+            norm = _normalize_text(canon)
+            if norm:
+                tokens = [t for t in norm.split() if len(t) >= 5]
+                norm_map.append((norm, tokens, canon))
+        norm_map.sort(key=lambda x: len(x[0]), reverse=True)
+
+        # 1) prefer full normalized phrase match
+        for norm, tokens, canon in norm_map:
+            if re.search(rf"\b{re.escape(norm)}\b", p_norm):
+                filters["municipality"] = canon
+                province_col = find_column(df, ["province"])
+                if province_col is not None:
+                    provinces = df[province_col].dropna().astype(str).unique()
+                    prov_norm_map = sorted((( _normalize_text(prov), prov) for prov in provinces), key=lambda x: len(x[0]), reverse=True)
+                    for prov_norm, prov_canon in prov_norm_map:
+                        if prov_norm and re.search(rf"\b{re.escape(prov_norm)}\b", p_norm):
+                            filters["province"] = prov_canon
                             break
                 return filters
 
-    # Province detection (if no municipality)
-    if not filters and "province" in df.columns:
-        provinces = sorted(df["province"].dropna().astype(str).unique(), key=len, reverse=True)
-        for prov in provinces:
-            if prov.lower() in p:
-                filters["province"] = prov
+        # 2) token-based match (e.g., 'paranaque' within 'paranaque metropolitan manila')
+        p_tokens = set(p_norm.split())
+        for norm, tokens, canon in norm_map:
+            if any(t in p_tokens for t in tokens):
+                filters["municipality"] = canon
+                province_col = find_column(df, ["province"])
+                if province_col is not None:
+                    provinces = df[province_col].dropna().astype(str).unique()
+                    prov_norm_map = sorted((( _normalize_text(prov), prov) for prov in provinces), key=lambda x: len(x[0]), reverse=True)
+                    for prov_norm, prov_canon in prov_norm_map:
+                        if prov_norm and re.search(rf"\b{re.escape(prov_norm)}\b", p_norm):
+                            filters["province"] = prov_canon
+                            break
                 return filters
 
+    # Province detection (if no municipality) – also diacritic-insensitive
+    if not filters:
+        province_col = find_column(df, ["province"])
+        if province_col is not None:
+            provinces = df[province_col].dropna().astype(str).unique()
+            prov_norm_map = sorted((( _normalize_text(prov), prov) for prov in provinces), key=lambda x: len(x[0]), reverse=True)
+            for prov_norm, prov_canon in prov_norm_map:
+                if prov_norm and re.search(rf"\b{re.escape(prov_norm)}\b", p_norm):
+                    filters["province"] = prov_canon
+                    return filters
+
     # Fallback: project_location
-    if "project_location" in df.columns:
-        locations = sorted(df["project_location"].dropna().astype(str).unique(), key=len, reverse=True)
+    project_loc_col = find_column(df, ["project_location", "location", "site_location"])
+    if project_loc_col is not None:
+        locations = sorted(df[project_loc_col].dropna().astype(str).unique(), key=len, reverse=True)
         for loc in locations:
             if loc.lower() in p:
                 filters["project_location"] = loc
@@ -97,7 +172,7 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
         return {"action": "min", "column": "approved_budget_num", "filters": filters}
 
     # Total budget pattern - CHECK SECOND
-    total_keywords: list[str] = ["total budget", "sum", "overall budget"]
+    total_keywords: list[str] = ["total budget", "sum", "overall budget","cost","total cost","total approved budget"]
     if any(keyword in p for keyword in total_keywords):
         filters = detect_filters(prompt, df)
         return {"action": "sum", "column": "approved_budget_num", "filters": filters}
@@ -221,11 +296,19 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     if not filters:
         return out
 
+    # Resolve common columns in a case-insensitive way
+    region_col = find_column(out, ["region"])
+    main_island_col = find_column(out, ["main_island", "mainisland", "main island"])
+    municipality_col = find_column(out, ["municipality", "city"])
+    province_col = find_column(out, ["province"])
+    project_loc_col = find_column(out, ["project_location", "location", "site_location"])
+    contractor_col = find_column(out, ["contractor", "contractor_name", "winning_contractor"])
+
     for k, v in filters.items():
         if v is None:
             continue
 
-        if k == "region" and "region" in out.columns:
+        if k == "region" and region_col is not None:
             pat = v.lower()
             patterns = []
             
@@ -263,27 +346,43 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
                 # Use word boundary or exact space matching to prevent partial matches
                 if p.startswith('region '):
                     # Match "Region II" but not "Region III"
-                    current_mask = out["region"].astype(str).str.lower().str.match(f"^{re.escape(p)}$|^{re.escape(p)}\s")
+                    current_mask = out[region_col].astype(str).str.lower().str.match(fr"^{re.escape(p)}$|^{re.escape(p)}\s")
                 else:
-                    current_mask = out["region"].astype(str).str.lower() == p
+                    current_mask = out[region_col].astype(str).str.lower() == p
                 mask = mask | current_mask
             
             out = out[mask]
             
-        elif k == "main_island" and "main_island" in out.columns:
-            mask = out["main_island"].astype(str).str.lower() == v.lower()
+        elif k == "main_island" and main_island_col is not None:
+            mask = out[main_island_col].astype(str).str.lower() == v.lower()
             out = out[mask]
 
-        elif k in out.columns:
-            if pd.api.types.is_string_dtype(out[k]):
-                mask = out[k].astype(str).str.strip().str.lower() == v.lower()
+        elif k in out.columns or (k in ["municipality", "province", "project_location", "contractor"]):
+            # map to actual column
+            col = None
+            if k == "municipality":
+                col = municipality_col
+            elif k == "province":
+                col = province_col
+            elif k == "project_location":
+                col = project_loc_col
+            elif k == "contractor":
+                col = contractor_col
+            if col is None and k in out.columns:
+                col = k
+
+            if col is None:
+                continue
+
+            if pd.api.types.is_string_dtype(out[col]):
+                mask = out[col].astype(str).str.strip().str.lower() == v.lower()
                 
                 if not mask.any():
-                    mask = out[k].astype(str).str.lower().str.contains(v.lower(), na=False)
+                    mask = out[col].astype(str).str.lower().str.contains(v.lower(), na=False)
                 
                 out = out[mask]
             else:
-                out = out[out[k] == v]
+                out = out[out[col] == v]
 
     return out
 
@@ -489,8 +588,8 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             place_parts.append(f"province of {filters['province']}")
         if "region" in filters:
             place_parts.append(f"Region {filters['region']}")
-        if "mainisland" in filters:
-            place_parts.append(filters['mainisland'])
+        if "main_island" in filters:
+            place_parts.append(filters['main_island'])
         if "project_location" in filters:
             place_parts.append(filters['project_location'])
         
@@ -511,8 +610,8 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 place_parts.append(f"province of {filters['province']}")
             if "region" in filters:
                 place_parts.append(f"Region {filters['region']}")
-            if "mainisland" in filters:
-                place_parts.append(filters['mainisland'])
+            if "main_island" in filters:
+                place_parts.append(filters['main_island'])
             if "project_location" in filters:
                 place_parts.append(filters['project_location'])
             
@@ -528,17 +627,13 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
     # Sum budget
     if action == "sum" and parsed["column"]:
         # Find the correct budget column
-        budget_cols = ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost']
-        budget_col = None
-        for col in budget_cols:
-            if col in sub.columns:
-                budget_col = col
-                break
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
         
         if budget_col is None:
             return "I couldn't find a budget column in the dataset."
-        
-        total = sub[budget_col].sum()
+
+        # Coerce to numeric to safely sum even if stored as strings
+        total = pd.to_numeric(sub[budget_col], errors='coerce').sum()
         if filters:
             # Create a more descriptive place name
             place_parts = []
@@ -548,8 +643,8 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 place_parts.append(f"province of {filters['province']}")
             if "region" in filters:
                 place_parts.append(f"Region {filters['region']}")
-            if "mainisland" in filters:
-                place_parts.append(filters['mainisland'])
+            if "main_island" in filters:
+                place_parts.append(filters['main_island'])
             if "project_location" in filters:
                 place_parts.append(filters['project_location'])
             
@@ -559,12 +654,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
     
     # Minimum budget
     if action == "min" and parsed["column"]:
-        budget_cols = ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost']
-        budget_col = None
-        for col in budget_cols:
-            if col in sub.columns:
-                budget_col = col
-                break
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
         
         if budget_col is None:
             return "I couldn't find a budget column in the dataset."
@@ -572,6 +662,9 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         if sub.empty:
             return "I couldn't find any matching projects for your request."
         
+        # Coerce to numeric for comparison
+        sub = sub.copy()
+        sub[budget_col] = pd.to_numeric(sub[budget_col], errors='coerce')
         row = sub.loc[sub[budget_col].idxmin()]
         
         # Find project ID column
@@ -586,8 +679,8 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             place_parts.append(f"Province of {filters['province']}")
         if "region" in filters:
             place_parts.append(f"Region {filters['region']}")
-        if "mainisland" in filters:
-            place_parts.append(filters['mainisland'].title())
+        if "main_island" in filters:
+            place_parts.append(filters['main_island'].title())
         if "project_location" in filters:
             place_parts.append(filters['project_location'])
         
@@ -599,12 +692,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
     # Max budget
     if action == "max" and parsed["column"]:
         # Find the correct budget column
-        budget_cols = ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost']
-        budget_col = None
-        for col in budget_cols:
-            if col in sub.columns:
-                budget_col = col
-                break
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
         
         if budget_col is None:
             return "I couldn't find a budget column in the dataset."
@@ -612,6 +700,9 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         if sub.empty:
             return "I couldn't find any projects matching that filter."
 
+        # Coerce to numeric for comparison
+        sub = sub.copy()
+        sub[budget_col] = pd.to_numeric(sub[budget_col], errors='coerce')
         row = sub.loc[sub[budget_col].idxmax()]
 
         # ✅ Use project_id if available
@@ -620,15 +711,25 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         
         # Find location with more detail
         location_parts = []
-        location_cols = ['municipality', 'province', 'legislativedistrict', 'project_location', 'location']
-        for col in location_cols:
-            if col in sub.columns and pd.notna(row.get(col)) and str(row.get(col)).strip():
+        # Resolve location columns case-insensitively
+        loc_candidates = [
+            find_column(sub, ['municipality', 'city']),
+            find_column(sub, ['province']),
+            find_column(sub, ['legislative_district', 'legislativedistrict']),
+            find_column(sub, ['project_location', 'location'])
+        ]
+        for col in [c for c in loc_candidates if c]:
+            if pd.notna(row.get(col)) and str(row.get(col)).strip():
                 location_parts.append(str(row[col]).strip())
-                break  # Take the first meaningful location found
+                break  # first meaningful
         
         location = ", ".join(location_parts) if location_parts else "Unknown Location"
 
-        result = f"The project with the highest budget is Project ID {project_id} in {location} with ₱{row[budget_col]:,.2f}."
+        value = row[budget_col]
+        if pd.notna(value):
+            result = f"The project with the highest budget is Project ID {project_id} in {location} with ₱{float(value):,.2f}."
+        else:
+            result = f"The project with the highest budget is Project ID {project_id} in {location}."
         
         # If we have filters, add context about the search area
         if filters:
@@ -639,8 +740,8 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 filter_parts.append(f"province of {filters['province']}")
             if "region" in filters:
                 filter_parts.append(f"Region {filters['region']}")
-            if "mainisland" in filters:
-                filter_parts.append(filters['mainisland'])
+            if "main_island" in filters:
+                filter_parts.append(filters['main_island'])
             if "project_location" in filters:
                 filter_parts.append(filters['project_location'])
             

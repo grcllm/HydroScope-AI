@@ -15,8 +15,7 @@ def normalize_column(col: str) -> str:
     Convert column names to snake_case (handles CamelCase + spaces).
     Example: "ApprovedBudgetForContract" -> "approved_budget_for_contract"
     """
-    # Fix: Add underscore before capital letters, then lowercase
-    col = re.sub(r'(?<!^)(?=[A-Z])', '_', col).lower()  # ✅ Correct: adds underscore
+    col = re.sub(r'(?<!^)(?=[A-Z])', '_', col).lower()
     return col.strip().replace(" ", "_")
 
 def clean_municipality_value(value):
