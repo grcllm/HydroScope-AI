@@ -1,4 +1,5 @@
-from typing import Dict
+from typing import Dict, Optional, Any
+import os
 import pandas as pd
 import re
 import unicodedata
@@ -33,7 +34,42 @@ def find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
                 return col
     return None
 
-def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, str]:
+# Display helpers
+def _display_municipality(name: str) -> str:
+    if not isinstance(name, str):
+        return str(name)
+    # Transform "CITY OF PARAÑAQUE, METROPOLITAN MANILA" -> "Parañaque City, Metro Manila"
+    s = name.strip()
+    # Normalize case pieces
+    parts = [p.strip() for p in s.split(',')]
+    city = parts[0]
+    rest = ", ".join(parts[1:]) if len(parts) > 1 else ""
+    city_norm = re.sub(r"^CITY OF\s+", "", city, flags=re.IGNORECASE).title()
+    # Heuristic: If it was CITY OF X, render as X City
+    if re.match(r"^CITY OF\s+", city, flags=re.IGNORECASE):
+        city_norm = f"{city_norm} City"
+    # Metro Manila alias
+    rest = re.sub(r"\bMETROPOLITAN MANILA\b", "Metro Manila", rest, flags=re.IGNORECASE)
+    return f"{city_norm}, {rest}".strip(', ')
+
+def _normalize_lgu_text(s: str) -> str:
+    if not isinstance(s, str):
+        return ""
+    s_norm = unicodedata.normalize('NFKD', s)
+    s_ascii = s_norm.encode('ascii', 'ignore').decode('ascii').lower()
+    s_ascii = re.sub(r"\b(city of|municipality of|municipality|city)\b", " ", s_ascii)
+    s_ascii = re.sub(r"[^a-z0-9\s\-]", " ", s_ascii)
+    s_ascii = re.sub(r"[\-]", " ", s_ascii)
+    s_ascii = re.sub(r"\s+", " ", s_ascii).strip()
+    return s_ascii
+
+def _today_year() -> int:
+    try:
+        return pd.Timestamp.today().year
+    except Exception:
+        return  pd.Timestamp.now().year
+
+def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, Any]:
     """Detect filters (region/province/municipality/island/project_location) from user prompt."""
     p = prompt.lower()
     
@@ -54,7 +90,7 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, str]:
         return s_ascii
 
     p_norm = _normalize_text(prompt)
-    filters = {}
+    filters: Dict[str, Any] = {}
 
     # Region IV-A / IV-B pattern
     m = re.search(r"region\s*(?:iv-?|4)?\s*[–-]?\s*([ab])", p)
@@ -130,6 +166,15 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, str]:
                             break
                 return filters
 
+    # Multi-location in municipality/province: "in Pasig or Quezon City" / "in Laguna and Cavite"
+    # Capture tokens after 'in' split by 'or/and,/'
+    m_multi = re.search(r"\bin\s+([a-z\s,\/]+)(?:\?|$)", p)
+    if m_multi and (find_column(df, ["municipality"]) or find_column(df, ["province"])):
+        raw = m_multi.group(1)
+        items = [it.strip() for it in re.split(r"\s*(?:,|\/|\band\b|\bor\b)\s*", raw) if it.strip()]
+        if items:
+            filters["multi_locations"] = items
+
     # Province detection (if no municipality) – also diacritic-insensitive
     if not filters:
         province_col = find_column(df, ["province"])
@@ -153,29 +198,109 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, str]:
     return filters
 
 
+def _parse_top_n(prompt: str) -> Optional[int]:
+    m = re.search(r"\btop\s+(\d{1,3})\b", prompt.lower())
+    if m:
+        try:
+            n = int(m.group(1))
+            return n if n > 0 else None
+        except Exception:
+            return None
+    return None
+
+def _parse_time_filters(prompt: str) -> Dict[str, Any]:
+    p = prompt.lower()
+    t: Dict[str, Any] = {}
+    # Year range: between 2021 and 2023
+    m = re.search(r"between\s+(\d{4})\s+and\s+(\d{4})", p)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        t["year_range"] = (min(a,b), max(a,b))
+        return t
+    # Single year: in 2023 / for 2024
+    m = re.search(r"\b(in|for)\s+(\d{4})\b", p)
+    if m:
+        t["year"] = int(m.group(2))
+    # Completed in YEAR
+    m = re.search(r"completed\s+in\s+(\d{4})", p)
+    if m:
+        t["completed_year"] = int(m.group(1))
+    # Relative years
+    if "last year" in p:
+        t["year"] = _today_year() - 1
+    if "this year" in p:
+        t["year"] = _today_year()
+    # Status keywords
+    if re.search(r"\bongoing\b", p):
+        t["status"] = "ongoing"
+    if re.search(r"\bcompleted\b", p) and "completed_year" not in t:
+        t["status"] = "completed"
+    return t
+
+
 
 def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
     p = prompt.lower()
 
     # 🔎 PRIORITY ORDER: Check statistical queries FIRST before project ID detection
 
+    # Top N projects with highest approved budget for a contractor
+    m_contractor_top = (
+        re.search(r"top\s+\d+\s+(?:with\s+the\s+)?(?:highest\s+)?(?:approved\s+)?budget\s+(?:of|for|by)\s+(.+)$", p)
+        or re.search(r"list\s+the\s+top\s+(\d+)\s+(?:with\s+the\s+)?(?:highest\s+)?(?:approved\s+)?budget\s+(?:of|for|by)\s+(.+)$", p)
+    )
+    if m_contractor_top:
+        # Extract top_n and contractor name
+        top_n = _parse_top_n(prompt) or 5
+        # Pick the last capture group that contains the name
+        if isinstance(m_contractor_top, re.Match):
+            contractor_query = m_contractor_top.group(m_contractor_top.lastindex).strip()
+        else:
+            contractor_query = ""
+        contractor_query = contractor_query.rstrip('. ,;!?')
+        # Try to resolve contractor name against dataset
+        contractor_col = find_column(df, ['contractor', 'contractor_name', 'winning_contractor'])
+        filters = {}
+        if contractor_col:
+            candidates = df[contractor_col].dropna().astype(str).unique()
+            best = None
+            cq = contractor_query.lower()
+            for c in candidates:
+                cs = str(c)
+                cl = cs.lower()
+                if cq and (cq in cl or cl in cq):
+                    best = cs
+                    break
+            if best:
+                filters['contractor'] = best
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "top_projects_by_contractor_budget", "filters": filters, "column": "approved_budget_num", "top_n": top_n, "time": time_filters}
+
+    # Contractor with highest total/approved budget (single winner) - CHECK BEFORE generic highest budget
+    if (
+        ("contractor" in p and re.search(r"highest\s+(?:total\s+)?(?:approved\s+)?budget", p))
+        or re.search(r"who\s+(?:is\s+)?the\s+contractor\s+with\s+(?:the\s+)?highest\s+(?:total\s+)?(?:approved\s+)?budget", p)
+        or re.search(r"which\s+contractor\s+(?:has|with)\s+(?:the\s+)?highest\s+(?:total\s+)?(?:approved\s+)?budget", p)
+    ):
+        filters = detect_filters(prompt, df)
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "contractor_max_total_budget", "filters": filters, "column": "approved_budget_num", "time": time_filters}
+
     # Highest budget pattern - CHECK FIRST
     highest_keywords: list[str] = ["highest approved budget", "max approved budget", "highest budget", "max budget", "largest budget", "biggest budget"]
     if any(keyword in p for keyword in highest_keywords):
         filters = detect_filters(prompt, df)
-        return {"action": "max", "column": "approved_budget_num", "filters": filters}
+        top_n = _parse_top_n(prompt) or 1
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "max", "column": "approved_budget_num", "filters": filters, "top_n": top_n, "time": time_filters}
     
     # Lowest budget pattern
     lowest_keywords: list[str] = ["lowest approved budget", "min approved budget", "minimum approved budget", "lowest budget", "minimum budget", "least budget"]
     if any(keyword in p for keyword in lowest_keywords):
         filters = detect_filters(prompt, df)
-        return {"action": "min", "column": "approved_budget_num", "filters": filters}
-
-    # Total budget pattern - CHECK SECOND
-    total_keywords: list[str] = ["total budget", "sum", "overall budget","cost","total cost","total approved budget"]
-    if any(keyword in p for keyword in total_keywords):
-        filters = detect_filters(prompt, df)
-        return {"action": "sum", "column": "approved_budget_num", "filters": filters}
+        top_n = _parse_top_n(prompt) or 1
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "min", "column": "approved_budget_num", "filters": filters, "top_n": top_n, "time": time_filters}
 
     # Count pattern - CHECK THIRD (Enhanced with contractor-specific logic)
     if "how many" in p or p.startswith("how many"):
@@ -183,6 +308,18 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
 
         # Special handling for contractor queries
         if "contractor" in p and not filters:
+            # Direct pattern: "how many projects contractor <NAME> have"
+            direct_match = re.search(r"how many projects\s+contractor\s+(.+?)\s+have\b", p)
+            if direct_match:
+                contractor_name = direct_match.group(1).strip().rstrip('.,;:!?')
+                contractor_col = find_column(df, ['contractor', 'contractor_name', 'winning_contractor'])
+                if contractor_col:
+                    contractors = df[contractor_col].dropna().unique()
+                    for contractor in contractors:
+                        if pd.notna(contractor) and contractor_name.lower() in str(contractor).lower():
+                            filters = {"contractor": contractor}
+                            break
+            
             # Enhanced patterns to catch more variations
             contractor_patterns = [
                 r"how many projects.*contractor.*have\s+(.+)$",
@@ -243,7 +380,50 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
                 place = m2.group(1).strip()
                 filters = {"project_location": place}
 
-        return {"action": "count", "filters": filters, "column": None}
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "count", "filters": filters, "column": None, "time": time_filters}
+
+    # Top contractors by total budget (prioritize before generic sum)
+    if re.search(r"top\s+\d+\s+contractors\s+by\s+(?:total\s+)?budget", p):
+        filters = detect_filters(prompt, df)
+        time_filters = _parse_time_filters(prompt)
+        top_n = _parse_top_n(prompt) or 5
+        return {"action": "top_contractors", "filters": filters, "column": "approved_budget_num", "top_n": top_n, "time": time_filters}
+
+    # Top contractors by number of projects
+    if re.search(r"top\s+\d+\s+contractors\s+by\s+(?:number\s+of\s+projects|project\s+count|projects)", p):
+        filters = detect_filters(prompt, df)
+        time_filters = _parse_time_filters(prompt)
+        top_n = _parse_top_n(prompt) or 10
+        return {"action": "top_contractors_by_count", "filters": filters, "column": None, "top_n": top_n, "time": time_filters}
+
+    # Contractor with highest number of projects (single winner)
+    if (
+        re.search(r"which\s+contractor\s+(?:has|with)\s+(?:the\s+)?(?:most|highest|largest)\s+(?:number\s+of\s+)?projects?", p)
+        or re.search(r"who\s+is\s+the\s+contractor\s+with\s+(?:the\s+)?(?:most|highest|largest)\s+(?:number\s+of\s+)?projects?", p)
+        or ("contractor" in p and re.search(r"highest\s+number\s+of\s+projects?", p))
+    ):
+        filters = detect_filters(prompt, df)
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "contractor_max_count", "filters": filters, "column": None, "time": time_filters}
+
+    # Total budget pattern - CHECK SECOND
+    total_keywords: list[str] = ["total budget", "sum", "overall budget","cost","total cost","total approved budget"]
+    if any(keyword in p for keyword in total_keywords):
+        filters = detect_filters(prompt, df)
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "sum", "column": "approved_budget_num", "filters": filters, "time": time_filters}
+
+    # Trend by year
+    if re.search(r"(trend|by year|per year)", p) and ("total" in p or "budget" in p):
+        filters = detect_filters(prompt, df)
+        return {"action": "trend_by_year", "filters": filters, "column": "approved_budget_num"}
+
+    # Comparative queries: which municipality in X has highest total budget
+    if re.search(r"which\s+municipality.*highest\s+total\s+budget", p):
+        filters = detect_filters(prompt, df)
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "municipality_max_total", "filters": filters, "column": "approved_budget_num", "time": time_filters}
 
     # NOW check for project ID patterns (after statistical queries)
     
@@ -303,6 +483,18 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     province_col = find_column(out, ["province"])
     project_loc_col = find_column(out, ["project_location", "location", "site_location"])
     contractor_col = find_column(out, ["contractor", "contractor_name", "winning_contractor"])
+
+    # Multi-location support (municipality/province lists)
+    multi_locs = filters.get("multi_locations")
+    if multi_locs:
+        # Try matching municipalities first; fallback to provinces
+        muni_col = municipality_col
+        prov_col = province_col
+        candidates_norm = [str(x).strip().lower() for x in multi_locs]
+        if muni_col is not None:
+            out = out[out[muni_col].astype(str).str.lower().apply(lambda x: any(c in x for c in candidates_norm))]
+        elif prov_col is not None:
+            out = out[out[prov_col].astype(str).str.lower().apply(lambda x: any(c in x for c in candidates_norm))]
 
     for k, v in filters.items():
         if v is None:
@@ -387,6 +579,48 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     return out
 
 
+def _apply_time_filters(df: pd.DataFrame, time_spec: Optional[Dict[str, Any]]) -> pd.DataFrame:
+    if not time_spec:
+        return df
+    out = df
+    # Prefer parsed dates where available
+    start_col = find_column(out, ["start_date_parsed", "startdate_parsed"]) or find_column(out, ["start_date", "startdate"]) 
+    comp_col  = find_column(out, ["completion_date_parsed", "actualcompletiondate_parsed"]) or find_column(out, ["completion_date", "actual_completion_date", "actualcompletiondate"]) 
+    year_col  = find_column(out, ["funding_year", "year"])  # backup when dates missing
+
+    # Completed in a specific year
+    if "completed_year" in time_spec and comp_col is not None:
+        year = int(time_spec["completed_year"])
+        out = out[pd.to_datetime(out[comp_col], errors='coerce').dt.year == year]
+
+    # Single year
+    if "year" in time_spec:
+        y = int(time_spec["year"])
+        if start_col is not None:
+            out = out[pd.to_datetime(out[start_col], errors='coerce').dt.year == y]
+        elif year_col is not None:
+            out = out[out[year_col].astype(str) == str(y)]
+
+    # Year range
+    if "year_range" in time_spec:
+        a, b = time_spec["year_range"]
+        if start_col is not None:
+            ys = pd.to_datetime(out[start_col], errors='coerce').dt.year
+            out = out[(ys >= a) & (ys <= b)]
+        elif year_col is not None:
+            ys = pd.to_numeric(out[year_col], errors='coerce')
+            out = out[(ys >= a) & (ys <= b)]
+
+    # Status filters
+    if time_spec.get("status") == "ongoing" and comp_col is not None:
+        comp = pd.to_datetime(out[comp_col], errors='coerce')
+        out = out[comp.isna() | (comp > pd.Timestamp.today())]
+    if time_spec.get("status") == "completed" and comp_col is not None:
+        comp = pd.to_datetime(out[comp_col], errors='coerce')
+        out = out[comp.notna() & (comp <= pd.Timestamp.today())]
+    return out
+
+
 def find_project_id_column(df: pd.DataFrame) -> str:
     """Find the correct project ID column name in the DataFrame."""
     possible_names = [
@@ -407,12 +641,75 @@ def find_project_id_column(df: pd.DataFrame) -> str:
     return df.columns[0] if len(df.columns) > 0 else None
 
 
+REQUIRE_CONFIRM = str(os.environ.get("REQUIRE_CONFIRM", "0")).lower() in {"1", "true", "yes", "on"}
+
+def _clarify_message(parsed: dict, df: pd.DataFrame) -> str:
+    action = parsed.get("action")
+    filters = parsed.get("filters", {})
+    time_spec = parsed.get("time", {})
+    top_n = parsed.get("top_n")
+    parts = ["I plan to:"]
+    if action == "max":
+        parts.append(f"find the highest approved budget" + (f" (top {top_n})" if top_n and top_n>1 else ""))
+    elif action == "min":
+        parts.append(f"find the lowest approved budget" + (f" (top {top_n})" if top_n and top_n>1 else ""))
+    elif action == "sum":
+        parts.append("compute the total approved budget")
+    elif action == "count":
+        parts.append("count the number of projects")
+    elif action == "top_contractors":
+        parts.append(f"find top {top_n} contractors by total budget")
+    elif action == "trend_by_year":
+        parts.append("show total budget by year (trend)")
+    elif action == "municipality_max_total":
+        parts.append("identify the municipality with the highest total budget in the specified region/area")
+    else:
+        parts.append(f"perform action '{action}'")
+
+    loc_bits = []
+    if "municipality" in filters:
+        loc_bits.append(_display_municipality(filters['municipality']))
+    if "province" in filters:
+        loc_bits.append(filters['province'].title() if isinstance(filters['province'], str) else str(filters['province']))
+    if "region" in filters:
+        loc_bits.append(f"Region {filters['region']}")
+    if "multi_locations" in filters:
+        loc_bits.append(" or ".join(filters['multi_locations']))
+    where = (", in " + ", ".join(loc_bits)) if loc_bits else ""
+
+    time_bits = []
+    if "completed_year" in time_spec:
+        time_bits.append(f"completed in {time_spec['completed_year']}")
+    if "year" in time_spec:
+        time_bits.append(f"in {time_spec['year']}")
+    if "year_range" in time_spec:
+        a,b = time_spec['year_range']
+        time_bits.append(f"between {a} and {b}")
+    if "status" in time_spec:
+        time_bits.append(time_spec['status'])
+    when = (" " + ", ".join(time_bits)) if time_bits else ""
+
+    questions = [
+        "- Do you want a specific year or range (e.g., 2023 or between 2021 and 2022)?",
+        "- How many results should I return (e.g., top 3)?",
+        "- Should I focus on approved budget or contract cost?",
+        "- Is this limited to certain locations or contractors?",
+    ]
+    return "Clarification needed: " + " ".join(parts) + f"{where}{when}.\n" + "\n".join(questions)
+
+
 def agent3_run(question: str, df: pd.DataFrame) -> str:
     parsed = simple_parse(question, df)
     action = parsed["action"]
     filters = parsed["filters"]
+    time_spec = parsed.get("time")
+    top_n = parsed.get("top_n") or 1
+
+    if REQUIRE_CONFIRM:
+        return _clarify_message(parsed, df)
 
     sub = apply_filters(df, filters)
+    sub = _apply_time_filters(sub, time_spec)
 
     # Handle specific field lookups (NEW FEATURE)
     if action in ["contractor_lookup", "budget_lookup", "start_date_lookup", "completion_lookup", "location_lookup"] and "project_id" in filters:
@@ -594,6 +891,21 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             place_parts.append(filters['project_location'])
         
         place_description = ", ".join(place_parts) if place_parts else list(filters.values())[0]
+        # Try to suggest nearest municipality/province by simple token inclusion
+        suggestions = []
+        try:
+            target = str(filters.get('municipality') or filters.get('province') or '').lower()
+            if target:
+                # search municipalities first
+                muc = find_column(df, ['municipality','city'])
+                if muc:
+                    vals = df[muc].dropna().astype(str).unique().tolist()
+                    matches = [v for v in vals if _normalize_lgu_text(target) in _normalize_lgu_text(v)]
+                    suggestions = [ _display_municipality(m) for m in matches[:5] ]
+        except Exception:
+            pass
+        if suggestions:
+            return f"I couldn't find any flood control projects in {place_description.title()}. Did you mean: {', '.join(suggestions)}?"
         return f"I couldn't find any flood control projects in {place_description.title()}."
 
     # Count
@@ -633,7 +945,16 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             return "I couldn't find a budget column in the dataset."
 
         # Coerce to numeric to safely sum even if stored as strings
-        total = pd.to_numeric(sub[budget_col], errors='coerce').sum()
+        sub_num = sub.copy()
+        sub_num[budget_col] = pd.to_numeric(sub_num[budget_col], errors='coerce')
+        # If multi-location specified, show per-location totals (comparative)
+        if filters.get('multi_locations'):
+            muni_col = find_column(sub_num, ['municipality','city']) or find_column(sub_num, ['province'])
+            if muni_col:
+                comp = sub_num.groupby(muni_col)[budget_col].sum().sort_values(ascending=False)
+                lines = [f"- {_display_municipality(str(k))}: ₱{float(v):,.2f}" for k,v in comp.items()]
+                return "Total approved budget by location:\n" + ("\n".join(lines) if lines else "No matching locations.")
+        total = sub_num[budget_col].sum()
         if filters:
             # Create a more descriptive place name
             place_parts = []
@@ -665,6 +986,23 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         # Coerce to numeric for comparison
         sub = sub.copy()
         sub[budget_col] = pd.to_numeric(sub[budget_col], errors='coerce')
+        # If requesting top-N, return N smallest
+        if top_n and top_n > 1:
+            rows = sub.nsmallest(top_n, budget_col)
+            lines = []
+            for _, r in rows.iterrows():
+                pid_col = find_project_id_column(sub)
+                pid = r.get(pid_col, 'N/A')
+                lines.append(f"- {pid}: ₱{float(r[budget_col]):,.2f}")
+            ctx = []
+            if "municipality" in filters:
+                ctx.append(_display_municipality(filters['municipality']))
+            if "province" in filters:
+                ctx.append(filters['province'])
+            if "region" in filters:
+                ctx.append(f"Region {filters['region']}")
+            prefix = f"Top {top_n} lowest budgets" + (f" in {', '.join(ctx)}" if ctx else "")
+            return prefix + ":\n" + "\n".join(lines)
         row = sub.loc[sub[budget_col].idxmin()]
         
         # Find project ID column
@@ -703,6 +1041,29 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         # Coerce to numeric for comparison
         sub = sub.copy()
         sub[budget_col] = pd.to_numeric(sub[budget_col], errors='coerce')
+        # If requesting top-N, return N largest
+        if top_n and top_n > 1:
+            rows = sub.nlargest(top_n, budget_col)
+            lines = []
+            pid_col = find_project_id_column(sub)
+            for _, r in rows.iterrows():
+                pid = r.get(pid_col, 'N/A')
+                # Find location
+                location_parts = []
+                for col in [find_column(sub, ['municipality','city']), find_column(sub, ['province'])]:
+                    if col and pd.notna(r.get(col)):
+                        location_parts.append(str(r.get(col)))
+                loc = ", ".join(location_parts) if location_parts else "Unknown Location"
+                lines.append(f"- {pid} in {_display_municipality(loc)}: ₱{float(r[budget_col]):,.2f}")
+            ctx = []
+            if "municipality" in filters:
+                ctx.append(_display_municipality(filters['municipality']))
+            if "province" in filters:
+                ctx.append(filters['province'])
+            if "region" in filters:
+                ctx.append(f"Region {filters['region']}")
+            prefix = f"Top {top_n} highest budgets" + (f" in {', '.join(ctx)}" if ctx else "")
+            return prefix + ":\n" + "\n".join(lines)
         row = sub.loc[sub[budget_col].idxmax()]
 
         # ✅ Use project_id if available
@@ -750,5 +1111,192 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 result = f"In {search_area.title()}: {result}"
         
         return result
+
+    # Top contractors by total budget
+    if action == "top_contractors":
+        budget_col = find_column(sub, ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost'])
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
+        if not budget_col or not contractor_col:
+            return "I couldn't find the required columns (contractor/budget)."
+        grp = sub.copy()
+        grp[budget_col] = pd.to_numeric(grp[budget_col], errors='coerce')
+        top = grp.groupby(contractor_col, dropna=True)[budget_col].sum().sort_values(ascending=False).head(top_n)
+        lines = [f"- {k}: ₱{float(v):,.2f}" for k, v in top.items()]
+        return f"Top {top_n} contractors by total budget:\n" + "\n".join(lines)
+
+    # Contractor with highest total/approved budget (single winner; tie-aware)
+    if action == "contractor_max_total_budget":
+        budget_col = find_column(sub, ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost'])
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
+        if not budget_col or not contractor_col:
+            return "I couldn't find the required columns (contractor/budget)."
+        if sub.empty:
+            return "I couldn't find any matching projects for your request."
+        tmp = sub.copy()
+        tmp[budget_col] = pd.to_numeric(tmp[budget_col], errors='coerce')
+        agg = tmp.groupby(contractor_col, dropna=True)[budget_col].sum().sort_values(ascending=False)
+        if agg.empty:
+            return "No contractor data found."
+        max_total = float(agg.iloc[0]) if pd.notna(agg.iloc[0]) else 0.0
+        top_contractors = [str(k) for k, v in agg.items() if float(v) == max_total]
+        # Build context string
+        ctx = []
+        muni_disp = _display_municipality(filters['municipality']) if 'municipality' in filters else None
+        prov_disp = str(filters['province']) if 'province' in filters else None
+        if muni_disp:
+            ctx.append(muni_disp)
+        if prov_disp and not (muni_disp and prov_disp.lower() in (muni_disp or '').lower()):
+            ctx.append(prov_disp)
+        if "region" in filters:
+            ctx.append(f"Region {filters['region']}")
+        in_ctx = f" in {', '.join(ctx)}" if ctx else ""
+
+        if len(top_contractors) == 1:
+            return f"The contractor with the highest total approved budget{in_ctx} is {top_contractors[0]} with ₱{max_total:,.2f}."
+        else:
+            names = ", ".join(top_contractors)
+            return f"There is a tie for the highest total approved budget{in_ctx}: {names} with ₱{max_total:,.2f} each."
+
+    # Top N projects with highest approved budget for a contractor
+    if action == "top_projects_by_contractor_budget":
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
+        if not contractor_col or not budget_col:
+            return "I couldn't find the required columns (contractor/budget)."
+        # If contractor not in filters, try to infer from question again
+        contractor_value = filters.get('contractor')
+        if not contractor_value:
+            return "Please specify a contractor name to list their top projects by approved budget."
+        # Ensure numeric budgets
+        tmp = sub.copy()
+        tmp[budget_col] = pd.to_numeric(tmp[budget_col], errors='coerce')
+        # Filter to contractor explicitly to be safe
+        mask = tmp[contractor_col].astype(str).str.strip().str.lower() == str(contractor_value).strip().lower()
+        tmp = tmp[mask]
+        if tmp.empty:
+            return f"I couldn't find any projects for contractor {contractor_value}."
+        # Sort and take top N
+        N = top_n if 'top_n' in locals() else (parsed.get('top_n') or 5)
+        rows = tmp.sort_values(by=budget_col, ascending=False).head(N)
+        pid_col = find_project_id_column(tmp)
+        title_col = find_column(tmp, ['project_title', 'project_name', 'name', 'projecttitle'])
+        lines = []
+        for _, r in rows.iterrows():
+            pid = r.get(pid_col, 'N/A') if pid_col else 'N/A'
+            title = r.get(title_col) if title_col else None
+            amt = r.get(budget_col)
+            if pd.notna(amt):
+                if title and str(title).strip():
+                    lines.append(f"- {pid}: {str(title).strip()} — ₱{float(amt):,.2f}")
+                else:
+                    lines.append(f"- {pid}: ₱{float(amt):,.2f}")
+        # Context
+        ctx = []
+        if "region" in filters:
+            ctx.append(f"Region {filters['region']}")
+        if "municipality" in filters:
+            ctx.append(_display_municipality(filters['municipality']))
+        if "province" in filters:
+            ctx.append(str(filters['province']))
+        header_ctx = (" in " + ", ".join(ctx)) if ctx else ""
+        return f"Top {len(rows)} projects with the highest approved budget for {contractor_value}{header_ctx}:\n" + ("\n".join(lines) if lines else "No projects found.")
+
+    # Top contractors by number of projects
+    if action == "top_contractors_by_count":
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
+        if not contractor_col:
+            return "I couldn't find the contractor column in the dataset."
+        # Count projects per contractor
+        counts = (
+            sub.copy()
+              .dropna(subset=[contractor_col])
+              .groupby(contractor_col, dropna=True)
+              .size()
+              .sort_values(ascending=False)
+              .head(top_n)
+        )
+        # Build context string for location filters (avoid duplicate province in municipality display)
+        ctx = []
+        muni_disp = None
+        prov_disp = None
+        if "municipality" in filters:
+            muni_disp = _display_municipality(filters['municipality'])
+        if "province" in filters:
+            prov_disp = str(filters['province'])
+        if muni_disp:
+            ctx.append(muni_disp)
+        if prov_disp and not (muni_disp and prov_disp.lower() in muni_disp.lower()):
+            ctx.append(prov_disp)
+        if "region" in filters:
+            ctx.append(f"Region {filters['region']}")
+        prefix = f"Top {top_n} contractors by number of projects" + (f" in {', '.join(ctx)}" if ctx else "")
+        lines = [f"- {k}: {int(v)} project(s)" for k, v in counts.items()]
+        return prefix + ":\n" + ("\n".join(lines) if len(lines) > 0 else "No contractor data found.")
+
+    # Contractor with highest number of projects (single winner; tie-aware)
+    if action == "contractor_max_count":
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
+        if not contractor_col:
+            return "I couldn't find the contractor column in the dataset."
+        if sub.empty:
+            return "I couldn't find any matching projects for your request."
+        counts = (
+            sub.copy()
+              .dropna(subset=[contractor_col])
+              .groupby(contractor_col, dropna=True)
+              .size()
+              .sort_values(ascending=False)
+        )
+        if counts.empty:
+            return "No contractor data found."
+        max_count = int(counts.iloc[0])
+        top_contractors = [str(k) for k, v in counts.items() if int(v) == max_count]
+        # Build context string
+        ctx = []
+        muni_disp = _display_municipality(filters['municipality']) if 'municipality' in filters else None
+        prov_disp = str(filters['province']) if 'province' in filters else None
+        if muni_disp:
+            ctx.append(muni_disp)
+        if prov_disp and not (muni_disp and prov_disp.lower() in (muni_disp or '').lower()):
+            ctx.append(prov_disp)
+        if "region" in filters:
+            ctx.append(f"Region {filters['region']}")
+        in_ctx = f" in {', '.join(ctx)}" if ctx else ""
+
+        if len(top_contractors) == 1:
+            return f"The contractor with the highest number of projects{in_ctx} is {top_contractors[0]} with {max_count} project(s)."
+        else:
+            names = ", ".join(top_contractors)
+            return f"There is a tie for the highest number of projects{in_ctx}: {names} with {max_count} project(s) each."
+
+    # Trend by year (total budget per year)
+    if action == "trend_by_year":
+        budget_col = find_column(sub, ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost'])
+        year_source = find_column(sub, ['start_date_parsed','start_date','funding_year'])
+        if not budget_col or not year_source:
+            return "I couldn't find columns needed for trend (budget/year)."
+        tmp = sub.copy()
+        if 'year' not in tmp.columns:
+            y = pd.to_datetime(tmp[year_source], errors='coerce').dt.year if 'date' in year_source else pd.to_numeric(tmp[year_source], errors='coerce')
+            tmp['year'] = y
+        tmp[budget_col] = pd.to_numeric(tmp[budget_col], errors='coerce')
+        series = tmp.groupby('year')[budget_col].sum().sort_index()
+        lines = [f"- {int(y)}: ₱{float(v):,.2f}" for y, v in series.items() if pd.notna(y)]
+        return "Total approved budget by year:\n" + ("\n".join(lines) if lines else "No yearly data available")
+
+    # Municipality with highest total budget in a region/area
+    if action == "municipality_max_total":
+        budget_col = find_column(sub, ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost'])
+        muni_col = find_column(sub, ['municipality','city'])
+        if not budget_col or not muni_col:
+            return "I couldn't find columns needed (municipality/budget)."
+        tmp = sub.copy()
+        tmp[budget_col] = pd.to_numeric(tmp[budget_col], errors='coerce')
+        agg = tmp.groupby(muni_col)[budget_col].sum().sort_values(ascending=False)
+        if agg.empty:
+            return "No municipalities found for that area."
+        muni = agg.index[0]
+        total = agg.iloc[0]
+        return f"The municipality with the highest total approved budget is {_display_municipality(str(muni))} with ₱{float(total):,.2f}."
 
     return "Sorry — I couldn't understand the question."
