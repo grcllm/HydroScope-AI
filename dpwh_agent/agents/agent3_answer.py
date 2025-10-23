@@ -3,6 +3,8 @@ import os
 import pandas as pd
 import re
 import unicodedata
+from dpwh_agent.utils.schema import find_column
+from dpwh_agent.utils.text import display_municipality as _display_municipality, normalize_lgu_text as _normalize_lgu_text
 
 ROMAN_MAP = {
     "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v",
@@ -11,57 +13,9 @@ ROMAN_MAP = {
     "16": "xvi", "17": "xvii", "18": "xviii"
 }
 
-# ---------- Column resolution utilities ----------
-def _norm_colname(name: str) -> str:
-    """Normalize a column or candidate name for case-insensitive matching.
-    Lowercase and drop non-alphanumeric characters (e.g., 'ApprovedBudgetForContract' -> 'approvedbudgetforcontract')."""
-    return re.sub(r"[^a-z0-9]", "", str(name).lower())
+# ---------- Column resolution utilities are provided by utils.schema.find_column
 
-def find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    """Return the first DataFrame column matching any candidate (case/format-insensitive)."""
-    if df is None or not hasattr(df, 'columns'):
-        return None
-    norm_map = {_norm_colname(c): c for c in df.columns}
-    for cand in candidates:
-        key = _norm_colname(cand)
-        if key in norm_map:
-            return norm_map[key]
-    # try partial contains fallback
-    for cand in candidates:
-        key = _norm_colname(cand)
-        for col in df.columns:
-            if key and key in _norm_colname(col):
-                return col
-    return None
 
-# Display helpers
-def _display_municipality(name: str) -> str:
-    if not isinstance(name, str):
-        return str(name)
-    # Transform "CITY OF PARAÑAQUE, METROPOLITAN MANILA" -> "Parañaque City, Metro Manila"
-    s = name.strip()
-    # Normalize case pieces
-    parts = [p.strip() for p in s.split(',')]
-    city = parts[0]
-    rest = ", ".join(parts[1:]) if len(parts) > 1 else ""
-    city_norm = re.sub(r"^CITY OF\s+", "", city, flags=re.IGNORECASE).title()
-    # Heuristic: If it was CITY OF X, render as X City
-    if re.match(r"^CITY OF\s+", city, flags=re.IGNORECASE):
-        city_norm = f"{city_norm} City"
-    # Metro Manila alias
-    rest = re.sub(r"\bMETROPOLITAN MANILA\b", "Metro Manila", rest, flags=re.IGNORECASE)
-    return f"{city_norm}, {rest}".strip(', ')
-
-def _normalize_lgu_text(s: str) -> str:
-    if not isinstance(s, str):
-        return ""
-    s_norm = unicodedata.normalize('NFKD', s)
-    s_ascii = s_norm.encode('ascii', 'ignore').decode('ascii').lower()
-    s_ascii = re.sub(r"\b(city of|municipality of|municipality|city)\b", " ", s_ascii)
-    s_ascii = re.sub(r"[^a-z0-9\s\-]", " ", s_ascii)
-    s_ascii = re.sub(r"[\-]", " ", s_ascii)
-    s_ascii = re.sub(r"\s+", " ", s_ascii).strip()
-    return s_ascii
 
 def _today_year() -> int:
     try:
@@ -533,16 +487,37 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
                 patterns.extend(['region iv-b', 'region 4-b', 'mimaropa'])
             
             # Build mask with EXACT matching after "region " prefix
-            mask = False
+            # Start with an all-False boolean Series to avoid scalar-bool indexing errors when no patterns match
+            mask = pd.Series(False, index=out.index)
             for p in patterns:
                 # Use word boundary or exact space matching to prevent partial matches
+                region_vals = out[region_col].astype(str).str.lower()
                 if p.startswith('region '):
-                    # Match "Region II" but not "Region III"
-                    current_mask = out[region_col].astype(str).str.lower().str.match(fr"^{re.escape(p)}$|^{re.escape(p)}\s")
+                    # Use startswith to allow suffixes like "(Cagayan Valley)" or extra descriptors
+                    current_mask = region_vals.str.startswith(p)
                 else:
-                    current_mask = out[region_col].astype(str).str.lower() == p
+                    current_mask = region_vals == p
                 mask = mask | current_mask
-            
+
+            # NCR alias support: also match province and DEO text for Metro Manila synonyms
+            ncr_aliases = {"national capital region", "ncr", "metro manila", "metropolitan manila"}
+            if pat in ncr_aliases:
+                # Province-based matching (common for Metro Manila rows)
+                if province_col is not None:
+                    prov_vals = out[province_col].astype(str).str.lower()
+                    prov_mask = pd.Series(False, index=out.index)
+                    for alias in ncr_aliases:
+                        prov_mask = prov_mask | prov_vals.str.contains(alias, na=False)
+                    mask = mask | prov_mask
+                # District Engineering Office sometimes contains Metro Manila
+                deo_col = find_column(out, ["district_engineering_office", "district engineering office"]) 
+                if deo_col is not None:
+                    deo_vals = out[deo_col].astype(str).str.lower()
+                    deo_mask = pd.Series(False, index=out.index)
+                    for alias in ncr_aliases:
+                        deo_mask = deo_mask | deo_vals.str.contains(alias, na=False)
+                    mask = mask | deo_mask
+
             out = out[mask]
             
         elif k == "main_island" and main_island_col is not None:
@@ -983,15 +958,27 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         if sub.empty:
             return "I couldn't find any matching projects for your request."
         
-        # Coerce to numeric for comparison
+        # Coerce to numeric for comparison and drop rows without a valid budget
         sub = sub.copy()
         sub[budget_col] = pd.to_numeric(sub[budget_col], errors='coerce')
-        # If requesting top-N, return N smallest
+        valid = sub.dropna(subset=[budget_col])
+        if valid.empty:
+            # All budgets are missing/invalid under this filter
+            ctx = []
+            if "municipality" in filters:
+                ctx.append(_display_municipality(filters['municipality']))
+            if "province" in filters:
+                ctx.append(filters['province'])
+            if "region" in filters:
+                ctx.append(f"Region {filters['region']}")
+            where = f" in {', '.join(ctx)}" if ctx else ""
+            return f"I couldn't find any projects with a valid approved budget{where}."
+        # If requesting top-N, return N smallest from valid rows
         if top_n and top_n > 1:
-            rows = sub.nsmallest(top_n, budget_col)
+            rows = valid.nsmallest(top_n, budget_col)
             lines = []
             for _, r in rows.iterrows():
-                pid_col = find_project_id_column(sub)
+                pid_col = find_project_id_column(valid)
                 pid = r.get(pid_col, 'N/A')
                 lines.append(f"- {pid}: ₱{float(r[budget_col]):,.2f}")
             ctx = []
@@ -1003,10 +990,10 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 ctx.append(f"Region {filters['region']}")
             prefix = f"Top {top_n} lowest budgets" + (f" in {', '.join(ctx)}" if ctx else "")
             return prefix + ":\n" + "\n".join(lines)
-        row = sub.loc[sub[budget_col].idxmin()]
+        row = valid.loc[valid[budget_col].idxmin()]
         
         # Find project ID column
-        project_id_col = find_project_id_column(df)
+        project_id_col = find_project_id_column(valid)
         pid = row[project_id_col] if project_id_col in row else "Unknown ID"
         
         # Figure out what table / filter matched (Municipality, Province, etc.)
@@ -1038,19 +1025,31 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         if sub.empty:
             return "I couldn't find any projects matching that filter."
 
-        # Coerce to numeric for comparison
+        # Coerce to numeric for comparison and drop rows without a valid budget
         sub = sub.copy()
         sub[budget_col] = pd.to_numeric(sub[budget_col], errors='coerce')
-        # If requesting top-N, return N largest
+        valid = sub.dropna(subset=[budget_col])
+        if valid.empty:
+            # All budgets are missing/invalid under this filter
+            ctx = []
+            if "municipality" in filters:
+                ctx.append(_display_municipality(filters['municipality']))
+            if "province" in filters:
+                ctx.append(filters['province'])
+            if "region" in filters:
+                ctx.append(f"Region {filters['region']}")
+            where = f" in {', '.join(ctx)}" if ctx else ""
+            return f"I couldn't find any projects with a valid approved budget{where}."
+        # If requesting top-N, return N largest from valid rows
         if top_n and top_n > 1:
-            rows = sub.nlargest(top_n, budget_col)
+            rows = valid.nlargest(top_n, budget_col)
             lines = []
-            pid_col = find_project_id_column(sub)
+            pid_col = find_project_id_column(valid)
             for _, r in rows.iterrows():
                 pid = r.get(pid_col, 'N/A')
                 # Find location
                 location_parts = []
-                for col in [find_column(sub, ['municipality','city']), find_column(sub, ['province'])]:
+                for col in [find_column(valid, ['municipality','city']), find_column(valid, ['province'])]:
                     if col and pd.notna(r.get(col)):
                         location_parts.append(str(r.get(col)))
                 loc = ", ".join(location_parts) if location_parts else "Unknown Location"
@@ -1064,20 +1063,20 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 ctx.append(f"Region {filters['region']}")
             prefix = f"Top {top_n} highest budgets" + (f" in {', '.join(ctx)}" if ctx else "")
             return prefix + ":\n" + "\n".join(lines)
-        row = sub.loc[sub[budget_col].idxmax()]
+        row = valid.loc[valid[budget_col].idxmax()]
 
         # ✅ Use project_id if available
-        project_id_col = find_project_id_column(sub)
+        project_id_col = find_project_id_column(valid)
         project_id = row[project_id_col] if project_id_col else "N/A"
         
         # Find location with more detail
         location_parts = []
         # Resolve location columns case-insensitively
         loc_candidates = [
-            find_column(sub, ['municipality', 'city']),
-            find_column(sub, ['province']),
-            find_column(sub, ['legislative_district', 'legislativedistrict']),
-            find_column(sub, ['project_location', 'location'])
+            find_column(valid, ['municipality', 'city']),
+            find_column(valid, ['province']),
+            find_column(valid, ['legislative_district', 'legislativedistrict']),
+            find_column(valid, ['project_location', 'location'])
         ]
         for col in [c for c in loc_candidates if c]:
             if pd.notna(row.get(col)) and str(row.get(col)).strip():
