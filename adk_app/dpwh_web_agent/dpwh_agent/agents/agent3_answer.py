@@ -1,10 +1,10 @@
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List, Tuple
 import os
 import pandas as pd
 import re
 import unicodedata
-from dpwh_agent.utils.schema import find_column
-from dpwh_agent.utils.text import display_municipality as _display_municipality, normalize_lgu_text as _normalize_lgu_text
+from dpwh_web_agent.dpwh_agent.utils.schema import find_column
+from dpwh_web_agent.dpwh_agent.utils.text import display_municipality as _display_municipality, normalize_lgu_text as _normalize_lgu_text
 
 ROMAN_MAP = {
     "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v",
@@ -14,6 +14,39 @@ ROMAN_MAP = {
 }
 
 # ---------- Column resolution utilities are provided by utils.schema.find_column
+
+# Simple in-process pagination memory for follow-ups like "yes" / "5 more".
+# This lives for the lifetime of the process (single-user ADK session is fine).
+_PAGINATION_STATE: Dict[str, Any] = {
+    "mode": None,              # 'location' | 'contractor' | None
+    "filters": None,           # filters dict used to build the list
+    "rows": None,              # List[Tuple[str, str]] of (project_id, contractor) in display order
+    "offset": 0,               # how many already shown
+    "header_ctx": "",          # cached header context text
+}
+
+def _set_pagination(mode: str, filters: dict, rows: List[Tuple[str, str]], header_ctx: str) -> None:
+    _PAGINATION_STATE.update({
+        "mode": mode,
+        "filters": filters,
+        "rows": rows,
+        "offset": 0,
+        "header_ctx": header_ctx,
+    })
+
+def _consume_more(count: int = 5) -> Optional[str]:
+    rows = _PAGINATION_STATE.get("rows") or []
+    off = int(_PAGINATION_STATE.get("offset") or 0)
+    if not rows or off >= len(rows):
+        return None
+    n = max(1, int(count))
+    take = rows[off: off + n]
+    _PAGINATION_STATE["offset"] = off + len(take)
+    lines = [f"- {pid} — {contr}" for pid, contr in take]
+    remaining = len(rows) - _PAGINATION_STATE["offset"]
+    tail = f"\n\nWould you like 5 more projects?" if remaining > 0 else ""
+    prefix = f"More projects{(' ' + _PAGINATION_STATE['header_ctx']) if _PAGINATION_STATE.get('header_ctx') else ''}:\n"
+    return prefix + ("\n".join(lines)) + tail
 
 
 
@@ -255,6 +288,39 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
         top_n = _parse_top_n(prompt) or 1
         time_filters = _parse_time_filters(prompt)
         return {"action": "min", "column": "approved_budget_num", "filters": filters, "top_n": top_n, "time": time_filters}
+
+    # List projects by location – interpret as "top 5 by highest approved budget in <place>"
+    # Also accept: "give me all <N> projects in <place>"
+    if ("list" in p and "project" in p and "in" in p) or re.search(r"list all .*projects", p) or re.search(r"give me all\s+\d+\s+projects\s+in", p):
+        filters = detect_filters(prompt, df)
+        # trigger only if we found a location-like filter
+        if any(k in filters for k in ("municipality", "province", "region", "project_location")):
+            time_filters = _parse_time_filters(prompt)
+            # Default top_n=5 and cap later in renderer unless explicit number appears after 'all'
+            m_alln = re.search(r"give me all\s+(\d+)\s+projects", p)
+            if m_alln:
+                try:
+                    return {"action": "top_projects_by_location_budget", "filters": filters, "column": "approved_budget_num", "top_n": int(m_alln.group(1)), "force_all": True, "time": time_filters}
+                except Exception:
+                    pass
+            return {"action": "top_projects_by_location_budget", "filters": filters, "column": "approved_budget_num", "top_n": 5, "time": time_filters}
+
+    # Follow-ups for pagination
+    if re.fullmatch(r"\s*(yes|yeah|yep|sure|ok|okay|please)\s*", p):
+        return {"action": "more_projects", "count": 5}
+    m_more = re.search(r"(\d+)\s+more\s+projects?", p)
+    if m_more:
+        try:
+            return {"action": "more_projects", "count": int(m_more.group(1))}
+        except Exception:
+            return {"action": "more_projects", "count": 5}
+    # "give me all 9 projects" without restating location – use pagination state
+    m_all_total = re.search(r"give me all\s+(\d+)\s+projects", p)
+    if m_all_total and not any(kw in p for kw in ["in "]):
+        try:
+            return {"action": "more_projects", "count": int(m_all_total.group(1))}
+        except Exception:
+            return {"action": "more_projects", "count": 5}
 
     # Count pattern - CHECK THIRD (Enhanced with contractor-specific logic)
     if "how many" in p or p.startswith("how many"):
@@ -1110,6 +1176,55 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 result = f"In {search_area.title()}: {result}"
         
         return result
+
+    # Top N projects with highest approved budget for a location (municipality/province/region)
+    if action == "top_projects_by_location_budget":
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
+        if budget_col is None:
+            return "I couldn't find a budget column in the dataset."
+        if sub.empty:
+            return "I couldn't find any matching projects for that location."
+        tmp = sub.copy()
+        tmp[budget_col] = pd.to_numeric(tmp[budget_col], errors='coerce')
+        tmp = tmp.dropna(subset=[budget_col])
+        if tmp.empty:
+            return "No projects with a valid approved budget were found for that location."
+        # Build a full sorted list once for pagination
+        tmp_sorted = tmp.sort_values(by=budget_col, ascending=False)
+        force_all = bool(parsed.get("force_all"))
+        n = int(top_n or 5)
+        top_rows = tmp_sorted.head(n if force_all else min(n, 5))
+        pid_col = find_project_id_column(tmp)
+        contractor_col = find_column(tmp, ['contractor', 'contractor_name', 'winning_contractor'])
+        lines = []
+        prepared: List[Tuple[str, str]] = []
+        for _, r in tmp_sorted.iterrows():
+            pid = r.get(pid_col, 'N/A')
+            contractor = r.get(contractor_col, 'Unknown Contractor') if contractor_col else 'Unknown Contractor'
+            prepared.append((str(pid), str(contractor)))
+        # Store pagination state then render the first chunk
+        ctx = []
+        if "municipality" in filters:
+            ctx.append(_display_municipality(filters['municipality']))
+        if "province" in filters:
+            ctx.append(str(filters['province']))
+        if "region" in filters:
+            ctx.append(f"Region {filters['region']}")
+        header_ctx = f"in {', '.join(ctx)}" if ctx else ""
+        _set_pagination("location", filters, prepared, header_ctx)
+        # consume first portion (min(5) unless force_all)
+        _PAGINATION_STATE['offset'] = len(top_rows)
+        lines = [f"- {pid} — {contr}" for pid, contr in prepared[:len(top_rows)]]
+        header = (f"Top {len(top_rows)} projects by approved budget" + (f" {header_ctx}" if header_ctx else "") + ":\n")
+        tail = "" if force_all or len(prepared) <= len(top_rows) else "\n\nWould you like 5 more projects?"
+        return header + ("\n".join(lines) if lines else "No projects found.") + tail
+
+    if action == "more_projects":
+        cnt = int(parsed.get("count") or 5)
+        out = _consume_more(cnt)
+        if out is None:
+            return "There are no more projects to show for the last location. You can ask for another place or specify a contractor."
+        return out
 
     # Top contractors by total budget
     if action == "top_contractors":
