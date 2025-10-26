@@ -11,16 +11,12 @@ from typing import Any, Dict, List, Optional
 import threading
 
 import pandas as pd
-import traceback
 
-from dpwh_web_agent.dpwh_agent.agents.agent3_answer import agent3_run
-from dpwh_web_agent.dpwh_agent.utils.schema import find_column
-from dpwh_web_agent.dpwh_agent.shared import (
+from dpwh_web_agent.dpwh_agent.agents.agent3_answer import (
+    agent3_run,
     find_project_id_column,
-    resolve_budget_column,
-    resolve_contractor_column,
-    format_money,
 )
+from dpwh_web_agent.dpwh_agent.utils.schema import find_column
 
 
 _DF_LOCK = threading.Lock()
@@ -47,10 +43,7 @@ def _agent_answer(question: str) -> str:
     try:
         return agent3_run(question, df)
     except Exception as e:
-        # Print full traceback to stdout for debugging (temporary)
-        print("[agentic/tools] Exception while running agent3_run:", type(e).__name__, e)
-        traceback.print_exc()
-        # Return a user-friendly error so the model doesn't surface a raw traceback
+        # Return a user-friendly error so the model doesn't surface a tool failure
         return (
             "I hit an internal error while computing that answer. "
             "Please try rephrasing the question or adding more specifics (e.g., municipality/province/year)."
@@ -308,8 +301,20 @@ def top_projects_for_contractor(contractor: str, top_n: int = 5) -> str:
     if not contractor or not str(contractor).strip():
         return "Please provide a contractor name."
 
-    contractor_col = resolve_contractor_column(df)
-    budget_col = resolve_budget_column(df)
+    contractor_col = find_column(df, [
+        "contractor",
+        "contractor_name",
+        "winning_contractor",
+    ])
+    budget_col = find_column(df, [
+        "approved_budget_num",
+        "approved_budget_for_contract",
+        "approvedbudgetforcontract",
+        "approved_budget",
+        "budget",
+        "contractcost",
+        "approved budget for contract",
+    ])
     if contractor_col is None or budget_col is None:
         return "I couldn't find the required columns (contractor/budget)."
 
@@ -339,7 +344,7 @@ def top_projects_for_contractor(contractor: str, top_n: int = 5) -> str:
         contr_val = r.get(contractor_col, target)
         amt = float(r[budget_col]) if pd.notna(r[budget_col]) else None
         if amt is not None:
-            lines.append(f"- {pid} — {contr_val} — {format_money(amt)}")
+            lines.append(f"- {pid} — {contr_val} — ₱{amt:,.2f}")
         else:
             lines.append(f"- {pid} — {contr_val}")
 
@@ -369,8 +374,20 @@ def highest_budget_for_contractor(contractor: str) -> str:
     if not contractor or not str(contractor).strip():
         return "Please provide a contractor name."
 
-    contractor_col = resolve_contractor_column(df)
-    budget_col = resolve_budget_column(df)
+    contractor_col = find_column(df, [
+        "contractor",
+        "contractor_name",
+        "winning_contractor",
+    ])
+    budget_col = find_column(df, [
+        "approved_budget_num",
+        "approved_budget_for_contract",
+        "approvedbudgetforcontract",
+        "approved_budget",
+        "budget",
+        "contractcost",
+        "approved budget for contract",
+    ])
     if contractor_col is None or budget_col is None:
         return "I couldn't find the required columns (contractor/budget)."
 
@@ -393,7 +410,7 @@ def highest_budget_for_contractor(contractor: str) -> str:
     amt = float(row[budget_col]) if pd.notna(row[budget_col]) else None
     if amt is None:
         return f"{pid} — Amount not available"
-    return f"{pid} — {format_money(amt)}"
+    return f"{pid} — ₱{amt:,.2f}"
 
 
 # ----------------------- Municipality comparison -----------------------------

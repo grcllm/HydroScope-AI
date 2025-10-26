@@ -5,12 +5,6 @@ import re
 import unicodedata
 from dpwh_web_agent.dpwh_agent.utils.schema import find_column
 from dpwh_web_agent.dpwh_agent.utils.text import display_municipality as _display_municipality, normalize_lgu_text as _normalize_lgu_text
-from dpwh_web_agent.dpwh_agent.shared import (
-    find_project_id_column,
-    resolve_budget_column,
-    resolve_contractor_column,
-    format_money,
-)
 
 ROMAN_MAP = {
     "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v",
@@ -252,7 +246,7 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
             contractor_query = ""
         contractor_query = contractor_query.rstrip('. ,;!?')
         # Try to resolve contractor name against dataset
-        contractor_col = resolve_contractor_column(df)
+        contractor_col = find_column(df, ['contractor', 'contractor_name', 'winning_contractor'])
         filters = {}
         if contractor_col:
             candidates = df[contractor_col].dropna().astype(str).unique()
@@ -338,7 +332,7 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
             direct_match = re.search(r"how many projects\s+contractor\s+(.+?)\s+have\b", p)
             if direct_match:
                 contractor_name = direct_match.group(1).strip().rstrip('.,;:!?')
-                contractor_col = resolve_contractor_column(df)
+                contractor_col = find_column(df, ['contractor', 'contractor_name', 'winning_contractor'])
                 if contractor_col:
                     contractors = df[contractor_col].dropna().unique()
                     for contractor in contractors:
@@ -508,7 +502,7 @@ def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
     municipality_col = find_column(out, ["municipality", "city"])
     province_col = find_column(out, ["province"])
     project_loc_col = find_column(out, ["project_location", "location", "site_location"])
-    contractor_col = resolve_contractor_column(out)
+    contractor_col = find_column(out, ["contractor", "contractor_name", "winning_contractor"])
 
     # Multi-location support (municipality/province lists)
     multi_locs = filters.get("multi_locations")
@@ -668,7 +662,24 @@ def _apply_time_filters(df: pd.DataFrame, time_spec: Optional[Dict[str, Any]]) -
     return out
 
 
-# project-id column helper moved to dpwh_web_agent.dpwh_agent.shared.find_project_id_column
+def find_project_id_column(df: pd.DataFrame) -> str:
+    """Find the correct project ID column name in the DataFrame."""
+    possible_names = [
+        'projectid', 'project_id', 'ProjectID', 'Project_ID', 
+        'project_number', 'projectnumber', 'id', 'ID'
+    ]
+    
+    for name in possible_names:
+        if name in df.columns:
+            return name
+    
+    # If none found, return the first column that might contain project IDs
+    for col in df.columns:
+        if 'project' in col.lower() and 'id' in col.lower():
+            return col
+    
+    # Last resort: return first column
+    return df.columns[0] if len(df.columns) > 0 else None
 
 
 REQUIRE_CONFIRM = str(os.environ.get("REQUIRE_CONFIRM", "0")).lower() in {"1", "true", "yes", "on"}
@@ -768,14 +779,14 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             return f"Contractor information is not available for Project ID {pid.upper()}."
         
         elif action == "budget_lookup":
-            # Use centralized budget column resolution
-            budget_col = resolve_budget_column(df)
-            if budget_col and pd.notna(row.get(budget_col)):
-                value = row.get(budget_col)
-                if isinstance(value, (int, float)):
-                    return f"The approved budget for Project ID {pid.upper()} is {format_money(float(value))}."
-                else:
-                    return f"The approved budget for Project ID {pid.upper()} is {value}."
+            budget_cols = ['approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost']
+            for col in budget_cols:
+                if col in df.columns and pd.notna(row.get(col)):
+                    value = row[col]
+                    if isinstance(value, (int, float)):
+                        return f"The approved budget for Project ID {pid.upper()} is ₱{value:,.2f}."
+                    else:
+                        return f"The approved budget for Project ID {pid.upper()} is {value}."
             return f"Budget information is not available for Project ID {pid.upper()}."
         
         elif action == "start_date_lookup":
@@ -874,7 +885,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             if value is not None and pd.notna(value) and str(value).strip():
                 # Special formatting for budget/monetary values
                 if display_name in ["Approved Budget", "Contract Amount"] and isinstance(value, (int, float)):
-                    formatted_value = format_money(float(value))
+                    formatted_value = f"₱{value:,.2f}"
                 else:
                     formatted_value = str(value).strip()
                 
@@ -969,22 +980,21 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
     # Sum budget
     if action == "sum" and parsed["column"]:
         # Find the correct budget column
-        budget_col = resolve_budget_column(sub)
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
+        
         if budget_col is None:
             return "I couldn't find a budget column in the dataset."
 
         # Coerce to numeric to safely sum even if stored as strings
         sub_num = sub.copy()
         sub_num[budget_col] = pd.to_numeric(sub_num[budget_col], errors='coerce')
-
         # If multi-location specified, show per-location totals (comparative)
         if filters.get('multi_locations'):
             muni_col = find_column(sub_num, ['municipality','city']) or find_column(sub_num, ['province'])
             if muni_col:
                 comp = sub_num.groupby(muni_col)[budget_col].sum().sort_values(ascending=False)
-                lines = [f"- {_display_municipality(str(k))}: {format_money(float(v))}" for k,v in comp.items()]
+                lines = [f"- {_display_municipality(str(k))}: ₱{float(v):,.2f}" for k,v in comp.items()]
                 return "Total approved budget by location:\n" + ("\n".join(lines) if lines else "No matching locations.")
-
         total = sub_num[budget_col].sum()
         if filters:
             # Create a more descriptive place name
@@ -999,14 +1009,14 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 place_parts.append(filters['main_island'])
             if "project_location" in filters:
                 place_parts.append(filters['project_location'])
-
+            
             place_description = ", ".join(place_parts) if place_parts else list(filters.values())[0]
-            return f"The total approved budget in {place_description.title()} is {format_money(total)}."
-        return f"The total approved budget for all projects is {format_money(total)}."
+            return f"The total approved budget in {place_description.title()} is ₱{total:,.2f}."
+        return f"The total approved budget for all projects is ₱{total:,.2f}."
     
     # Minimum budget
     if action == "min" and parsed["column"]:
-        budget_col = resolve_budget_column(sub)
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
         
         if budget_col is None:
             return "I couldn't find a budget column in the dataset."
@@ -1036,7 +1046,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             for _, r in rows.iterrows():
                 pid_col = find_project_id_column(valid)
                 pid = r.get(pid_col, 'N/A')
-                lines.append(f"- {pid}: {format_money(float(r[budget_col]))}")
+                lines.append(f"- {pid}: ₱{float(r[budget_col]):,.2f}")
             ctx = []
             if "municipality" in filters:
                 ctx.append(_display_municipality(filters['municipality']))
@@ -1066,13 +1076,14 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             place_parts.append(filters['project_location'])
         
         place_description = ", ".join(place_parts) if place_parts else "the dataset"
+        
         return (f"In {place_description}: The project with the lowest approved budget "
-            f"is Project ID {pid} with {format_money(float(row[budget_col]))}.")
+                f"is Project ID {pid} with ₱{row[budget_col]:,.2f}.")
 
     # Max budget
     if action == "max" and parsed["column"]:
         # Find the correct budget column
-        budget_col = resolve_budget_column(sub)
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
         
         if budget_col is None:
             return "I couldn't find a budget column in the dataset."
@@ -1108,7 +1119,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                     if col and pd.notna(r.get(col)):
                         location_parts.append(str(r.get(col)))
                 loc = ", ".join(location_parts) if location_parts else "Unknown Location"
-                lines.append(f"- {pid} in {_display_municipality(loc)}: {format_money(float(r[budget_col]))}")
+                lines.append(f"- {pid} in {_display_municipality(loc)}: ₱{float(r[budget_col]):,.2f}")
             ctx = []
             if "municipality" in filters:
                 ctx.append(_display_municipality(filters['municipality']))
@@ -1142,7 +1153,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
 
         value = row[budget_col]
         if pd.notna(value):
-            result = f"The project with the highest budget is Project ID {project_id} in {location} with {format_money(float(value))}."
+            result = f"The project with the highest budget is Project ID {project_id} in {location} with ₱{float(value):,.2f}."
         else:
             result = f"The project with the highest budget is Project ID {project_id} in {location}."
         
@@ -1168,7 +1179,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
 
     # Top N projects with highest approved budget for a location (municipality/province/region)
     if action == "top_projects_by_location_budget":
-        budget_col = resolve_budget_column(sub)
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
         if budget_col is None:
             return "I couldn't find a budget column in the dataset."
         if sub.empty:
@@ -1184,7 +1195,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         n = int(top_n or 5)
         top_rows = tmp_sorted.head(n if force_all else min(n, 5))
         pid_col = find_project_id_column(tmp)
-        contractor_col = resolve_contractor_column(tmp)
+        contractor_col = find_column(tmp, ['contractor', 'contractor_name', 'winning_contractor'])
         lines = []
         prepared: List[Tuple[str, str]] = []
         for _, r in tmp_sorted.iterrows():
@@ -1209,37 +1220,28 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         return header + ("\n".join(lines) if lines else "No projects found.") + tail
 
     if action == "more_projects":
-        # Safe parse of count (user might say "5 more" or just "more")
-        try:
-            cnt = int(parsed.get("count") or 5)
-        except Exception:
-            cnt = 5
-        # If no pagination state exists, inform the user instead of failing
-        if not _PAGINATION_STATE.get("rows"):
-            return "I don't have a previous list to continue from. Ask me to list projects for a location or contractor first (e.g., 'list top 5 projects in Taytay')."
+        cnt = int(parsed.get("count") or 5)
         out = _consume_more(cnt)
         if out is None:
-            # Exhausted the current pagination
-            _PAGINATION_STATE.update({"mode": None, "rows": None, "offset": 0, "filters": None, "header_ctx": ""})
-            return "There are no more projects to show for the last list. You can ask for another place or specify a contractor."
+            return "There are no more projects to show for the last location. You can ask for another place or specify a contractor."
         return out
 
     # Top contractors by total budget
     if action == "top_contractors":
-        budget_col = resolve_budget_column(sub)
-        contractor_col = resolve_contractor_column(sub)
+        budget_col = find_column(sub, ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost'])
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
         if not budget_col or not contractor_col:
             return "I couldn't find the required columns (contractor/budget)."
         grp = sub.copy()
         grp[budget_col] = pd.to_numeric(grp[budget_col], errors='coerce')
         top = grp.groupby(contractor_col, dropna=True)[budget_col].sum().sort_values(ascending=False).head(top_n)
-        lines = [f"- {k}: {format_money(float(v))}" for k, v in top.items()]
+        lines = [f"- {k}: ₱{float(v):,.2f}" for k, v in top.items()]
         return f"Top {top_n} contractors by total budget:\n" + "\n".join(lines)
 
     # Contractor with highest total/approved budget (single winner; tie-aware)
     if action == "contractor_max_total_budget":
-        budget_col = resolve_budget_column(sub)
-        contractor_col = resolve_contractor_column(sub)
+        budget_col = find_column(sub, ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost'])
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
         if not budget_col or not contractor_col:
             return "I couldn't find the required columns (contractor/budget)."
         if sub.empty:
@@ -1264,15 +1266,15 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         in_ctx = f" in {', '.join(ctx)}" if ctx else ""
 
         if len(top_contractors) == 1:
-            return f"The contractor with the highest total approved budget{in_ctx} is {top_contractors[0]} with {format_money(max_total)}."
+            return f"The contractor with the highest total approved budget{in_ctx} is {top_contractors[0]} with ₱{max_total:,.2f}."
         else:
             names = ", ".join(top_contractors)
-            return f"There is a tie for the highest total approved budget{in_ctx}: {names} with {format_money(max_total)} each."
+            return f"There is a tie for the highest total approved budget{in_ctx}: {names} with ₱{max_total:,.2f} each."
 
     # Top N projects with highest approved budget for a contractor
     if action == "top_projects_by_contractor_budget":
-        budget_col = resolve_budget_column(sub)
-        contractor_col = resolve_contractor_column(sub)
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
         if not contractor_col or not budget_col:
             return "I couldn't find the required columns (contractor/budget)."
         # If contractor not in filters, try to infer from question again
@@ -1287,26 +1289,22 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         tmp = tmp[mask]
         if tmp.empty:
             return f"I couldn't find any projects for contractor {contractor_value}."
-        # Build a full sorted list once for pagination and display
-        N = int(top_n if 'top_n' in locals() and top_n else (parsed.get('top_n') or 5))
-        tmp_sorted = tmp.sort_values(by=budget_col, ascending=False)
+        # Sort and take top N
+        N = top_n if 'top_n' in locals() else (parsed.get('top_n') or 5)
+        rows = tmp.sort_values(by=budget_col, ascending=False).head(N)
         pid_col = find_project_id_column(tmp)
         title_col = find_column(tmp, ['project_title', 'project_name', 'name', 'projecttitle'])
-
-        # Prepare rows as tuples (pid, display) for pagination
-        prepared: List[Tuple[str, str]] = []
-        for _, r in tmp_sorted.iterrows():
+        lines = []
+        for _, r in rows.iterrows():
             pid = r.get(pid_col, 'N/A') if pid_col else 'N/A'
-            amt = r.get(budget_col)
             title = r.get(title_col) if title_col else None
+            amt = r.get(budget_col)
             if pd.notna(amt):
                 if title and str(title).strip():
-                    display = f"{str(title).strip()} — {format_money(float(amt))}"
+                    lines.append(f"- {pid}: {str(title).strip()} — ₱{float(amt):,.2f}")
                 else:
-                    display = f"{format_money(float(amt))}"
-                prepared.append((str(pid), display))
-
-        # Context for header
+                    lines.append(f"- {pid}: ₱{float(amt):,.2f}")
+        # Context
         ctx = []
         if "region" in filters:
             ctx.append(f"Region {filters['region']}")
@@ -1315,20 +1313,11 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         if "province" in filters:
             ctx.append(str(filters['province']))
         header_ctx = (" in " + ", ".join(ctx)) if ctx else ""
-
-        # Store pagination state and return the first page
-        _set_pagination("contractor", filters | {"contractor": contractor_value}, prepared, f"for {contractor_value}{header_ctx}")
-        # First page size
-        page_n = min(N, 5)
-        _PAGINATION_STATE['offset'] = page_n
-        first_chunk = prepared[:page_n]
-        lines = [f"- {pid}: {display}" for pid, display in first_chunk]
-        tail = "" if len(prepared) <= page_n else "\n\nWould you like 5 more projects?"
-        return f"Top {min(N, len(prepared))} projects with the highest approved budget for {contractor_value}{header_ctx}:\n" + ("\n".join(lines) if lines else "No projects found.") + tail
+        return f"Top {len(rows)} projects with the highest approved budget for {contractor_value}{header_ctx}:\n" + ("\n".join(lines) if lines else "No projects found.")
 
     # Top contractors by number of projects
     if action == "top_contractors_by_count":
-        contractor_col = resolve_contractor_column(sub)
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
         if not contractor_col:
             return "I couldn't find the contractor column in the dataset."
         # Count projects per contractor
@@ -1360,7 +1349,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
 
     # Contractor with highest number of projects (single winner; tie-aware)
     if action == "contractor_max_count":
-        contractor_col = resolve_contractor_column(sub)
+        contractor_col = find_column(sub, ['contractor', 'contractor_name', 'winning_contractor'])
         if not contractor_col:
             return "I couldn't find the contractor column in the dataset."
         if sub.empty:
@@ -1396,7 +1385,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
 
     # Trend by year (total budget per year)
     if action == "trend_by_year":
-        budget_col = resolve_budget_column(sub)
+        budget_col = find_column(sub, ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost'])
         year_source = find_column(sub, ['start_date_parsed','start_date','funding_year'])
         if not budget_col or not year_source:
             return "I couldn't find columns needed for trend (budget/year)."
@@ -1406,12 +1395,12 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             tmp['year'] = y
         tmp[budget_col] = pd.to_numeric(tmp[budget_col], errors='coerce')
         series = tmp.groupby('year')[budget_col].sum().sort_index()
-        lines = [f"- {int(y)}: {format_money(float(v))}" for y, v in series.items() if pd.notna(y)]
+        lines = [f"- {int(y)}: ₱{float(v):,.2f}" for y, v in series.items() if pd.notna(y)]
         return "Total approved budget by year:\n" + ("\n".join(lines) if lines else "No yearly data available")
 
     # Municipality with highest total budget in a region/area
     if action == "municipality_max_total":
-        budget_col = resolve_budget_column(sub)
+        budget_col = find_column(sub, ['approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost'])
         muni_col = find_column(sub, ['municipality','city'])
         if not budget_col or not muni_col:
             return "I couldn't find columns needed (municipality/budget)."
@@ -1422,6 +1411,6 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             return "No municipalities found for that area."
         muni = agg.index[0]
         total = agg.iloc[0]
-        return f"The municipality with the highest total approved budget is {_display_municipality(str(muni))} with {format_money(float(total))}."
+        return f"The municipality with the highest total approved budget is {_display_municipality(str(muni))} with ₱{float(total):,.2f}."
 
     return "Sorry — I couldn't understand the question."

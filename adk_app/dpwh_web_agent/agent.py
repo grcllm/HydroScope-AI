@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 
+# Ensure the repo root is on sys.path so imports like `dpwh_agent.*` and `dpwh_web_agent.*` work
 _HERE = Path(__file__).resolve()
 _REPO_ROOT = _HERE.parents[2]  # <root>/adk_app/dpwh_web_agent/agent.py -> parents[2] = <root>
 if str(_REPO_ROOT) not in sys.path:
@@ -27,7 +28,7 @@ from dpwh_web_agent.tools.memory import _load_precreated_dataset
 root_agent = Agent(
     model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
     name="root_agent",
-    description="DPWH analytics agent using multiple sub-agents",
+    description="DPWH analytics concierge using multiple sub-agents",
     instruction=prompt.ROOT_AGENT_INSTR,
     sub_agents=[
         data_prep_agent,
