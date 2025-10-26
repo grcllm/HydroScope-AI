@@ -5,6 +5,7 @@ import re
 import unicodedata
 from dpwh_web_agent.dpwh_agent.utils.schema import find_column
 from dpwh_web_agent.dpwh_agent.utils.text import display_municipality as _display_municipality, normalize_lgu_text as _normalize_lgu_text
+from dpwh_web_agent.dpwh_agent.shared import format_money
 
 ROMAN_MAP = {
     "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v",
@@ -15,17 +16,15 @@ ROMAN_MAP = {
 
 # ---------- Column resolution utilities are provided by utils.schema.find_column
 
-# Simple in-process pagination memory for follow-ups like "yes" / "5 more".
-# This lives for the lifetime of the process (single-user ADK session is fine).
 _PAGINATION_STATE: Dict[str, Any] = {
     "mode": None,              # 'location' | 'contractor' | None
     "filters": None,           # filters dict used to build the list
-    "rows": None,              # List[Tuple[str, str]] of (project_id, contractor) in display order
+    "rows": None,              # List of tuples in display order. Rows may be (project_id, contractor) or (project_id, contractor, budget)
     "offset": 0,               # how many already shown
     "header_ctx": "",          # cached header context text
 }
 
-def _set_pagination(mode: str, filters: dict, rows: List[Tuple[str, str]], header_ctx: str) -> None:
+def _set_pagination(mode: str, filters: dict, rows: List[Tuple[str, str, Any]] | List[Tuple[str, str]], header_ctx: str) -> None:
     _PAGINATION_STATE.update({
         "mode": mode,
         "filters": filters,
@@ -42,7 +41,23 @@ def _consume_more(count: int = 5) -> Optional[str]:
     n = max(1, int(count))
     take = rows[off: off + n]
     _PAGINATION_STATE["offset"] = off + len(take)
-    lines = [f"- {pid} — {contr}" for pid, contr in take]
+    lines = []
+    for item in take:
+        # item may be (pid, contractor) or (pid, contractor, budget)
+        try:
+            if len(item) >= 3:
+                pid, contr, amt = item[0], item[1], item[2]
+                if amt is not None and isinstance(amt, (int, float)):
+                    lines.append(f"- {pid} — {contr} — {format_money(float(amt))}")
+                else:
+                    lines.append(f"- {pid} — {contr}")
+            elif len(item) == 2:
+                pid, contr = item
+                lines.append(f"- {pid} — {contr}")
+            else:
+                lines.append(f"- {item}")
+        except Exception:
+            lines.append(str(item))
     remaining = len(rows) - _PAGINATION_STATE["offset"]
     tail = f"\n\nWould you like 5 more projects?" if remaining > 0 else ""
     prefix = f"More projects{(' ' + _PAGINATION_STATE['header_ctx']) if _PAGINATION_STATE.get('header_ctx') else ''}:\n"
@@ -96,6 +111,23 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, Any]:
         filters["region"] = "Cordillera Administrative Region"
         return filters
 
+    # Davao region / city / provinces handling (common ambiguous user input 'Davao')
+    if re.search(r"\bdavao\b", p):
+        # Explicit city mention -> municipality
+        if re.search(r"\bdavao\s*,?\s*city\b|\bdavao\s+city\b", p):
+            filters["municipality"] = "Davao City"
+            return filters
+        # Province forms like 'Davao del Norte', 'Davao del Sur', 'Davao de Oro', 'Davao Occidental'
+        mprov = re.search(r"davao\s+(del\s+norte|del\s+sur|de\s+oro|occidental|oriental)", p)
+        if mprov:
+            prov = mprov.group(0).strip()
+            filters["province"] = prov.title()
+            return filters
+        # Region or plain 'Davao' -> assume Davao Region (Region XI)
+        if re.search(r"davao region|region\s*(xi|11)", p) or ("davao" in p and ("region" in p or "," not in prompt)):
+            filters["region"] = "Davao Region"
+            return filters
+
     # Standard region pattern (handles both roman and numeric)
     m = re.search(r"region\s*([0-9ivx]+)", p)
     if m:
@@ -114,6 +146,24 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, Any]:
     muni_col = find_column(df, ["municipality", "city"])
     if muni_col is not None:
         municipalities = df[muni_col].dropna().astype(str).unique()
+        m_city = re.search(r"\b([a-zA-Z][a-zA-Z\s\.'\-&]{1,60})\s*,?\s*city\b", prompt, flags=re.I)
+        if m_city:
+            candidate_name = m_city.group(1).strip()
+            candidate_full = f"{candidate_name} City"
+            for muni in municipalities:
+                if muni and muni.strip().lower() == candidate_full.strip().lower():
+                    filters["municipality"] = muni
+                    # attempt to capture province if present in the prompt
+                    province_col = find_column(df, ["province"])
+                    if province_col is not None:
+                        provinces = df[province_col].dropna().astype(str).unique()
+                        prov_norm_map = sorted(((_normalize_text(prov), prov) for prov in provinces), key=lambda x: len(x[0]), reverse=True)
+                        p_norm = _normalize_text(prompt)
+                        for prov_norm, prov_canon in prov_norm_map:
+                            if prov_norm and re.search(rf"\b{re.escape(prov_norm)}\b", p_norm):
+                                filters["province"] = prov_canon
+                                break
+                    return filters
         # Build normalized lookup: longest names first to avoid partial collisions
         norm_map = []  # list of tuples (norm_name, tokens, canonical)
         for muni in municipalities:
@@ -307,7 +357,10 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
 
     # Follow-ups for pagination
     if re.fullmatch(r"\s*(yes|yeah|yep|sure|ok|okay|please)\s*", p):
-        return {"action": "more_projects", "count": 5}
+        return {"action": "more_projects", "count": 5, "filters": {}}
+    # Plain 'more' or 'show more' should also map to pagination follow-up
+    if p.strip() in {"more", "more projects", "show more", "5 more", "5 more projects"}:
+        return {"action": "more_projects", "count": 5, "filters": {}}
     m_more = re.search(r"(\d+)\s+more\s+projects?", p)
     if m_more:
         try:
@@ -779,15 +832,68 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             return f"Contractor information is not available for Project ID {pid.upper()}."
         
         elif action == "budget_lookup":
-            budget_cols = ['approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost']
+            # Try several common budget-like columns, prefer explicit numeric values
+            budget_cols = [
+                'approved_budget_num', 'approvedbudgetforcontract', 'approved_budget', 'approved budget for contract',
+                'budget', 'contractcost', 'contract_amount', 'contractamount', 'amount'
+            ]
+
             for col in budget_cols:
-                if col in df.columns and pd.notna(row.get(col)):
+                if col in df.columns and pd.notna(row.get(col)) and str(row.get(col)).strip():
                     value = row[col]
+                    # Direct numeric
                     if isinstance(value, (int, float)):
-                        return f"The approved budget for Project ID {pid.upper()} is ₱{value:,.2f}."
-                    else:
-                        return f"The approved budget for Project ID {pid.upper()} is {value}."
-            return f"Budget information is not available for Project ID {pid.upper()}."
+                        return f"The approved budget for Project ID {pid.upper()} is {format_money(value)}."
+
+                    # Try to parse numeric from string (remove currency symbols/commas)
+                    s = str(value)
+                    num_s = re.sub(r"[^0-9.\-]", "", s)
+                    try:
+                        # Avoid empty or just '-' strings
+                        if num_s and not re.fullmatch(r"[\.-]+", num_s):
+                            num = float(num_s)
+                            return f"The approved budget for Project ID {pid.upper()} is {format_money(num)} (parsed from column '{col}')."
+                    except Exception:
+                        pass
+
+                    # If parsing failed, return the raw value as last resort
+                    return f"The approved budget for Project ID {pid.upper()} is {s} (from column '{col}')."
+
+            # As a fallback, search all columns for numeric substrings and return the largest candidate found
+            numeric_candidates = []  # list of (col, numeric_value)
+            for col in df.columns:
+                try:
+                    val = row.get(col)
+                    if pd.isna(val):
+                        continue
+                    s = str(val)
+                    # find numbers like 1,234,567.89 or 1234567.89
+                    found_nums = re.findall(r"[0-9]{1,3}(?:[,0-9]{0,})?(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?", s)
+                    for n in found_nums:
+                        n_clean = n.replace(',', '')
+                        try:
+                            fnum = float(n_clean)
+                            numeric_candidates.append((col, fnum))
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+
+            if numeric_candidates:
+                # pick the largest numeric candidate as the most-likely budget
+                col, val = max(numeric_candidates, key=lambda x: x[1])
+                return (
+                    f"I couldn't find a dedicated budget column for Project ID {pid.upper()}, "
+                    f"but found a numeric value in column '{col}': {format_money(val)}. "
+                    "This may be an inferred value — please verify against the source data."
+                )
+
+            # Nothing found
+            return (
+                f"Budget information is not available for Project ID {pid.upper()} in the dataset. "
+                "I checked common budget columns and scanned other fields for numeric values but found none. "
+                "If you have the original source file or a different dataset column name, I can try again."
+            )
         
         elif action == "start_date_lookup":
             start_cols = ['startdate', 'start_date', 'datestarted', 'commencement_date']
@@ -1201,7 +1307,12 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         for _, r in tmp_sorted.iterrows():
             pid = r.get(pid_col, 'N/A')
             contractor = r.get(contractor_col, 'Unknown Contractor') if contractor_col else 'Unknown Contractor'
-            prepared.append((str(pid), str(contractor)))
+            amt = r.get(budget_col)
+            try:
+                amt_val = float(amt) if pd.notna(amt) else None
+            except Exception:
+                amt_val = None
+            prepared.append((str(pid), str(contractor), amt_val))
         # Store pagination state then render the first chunk
         ctx = []
         if "municipality" in filters:
@@ -1214,7 +1325,20 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         _set_pagination("location", filters, prepared, header_ctx)
         # consume first portion (min(5) unless force_all)
         _PAGINATION_STATE['offset'] = len(top_rows)
-        lines = [f"- {pid} — {contr}" for pid, contr in prepared[:len(top_rows)]]
+        def _format_entry(e):
+            if len(e) >= 3:
+                pid, contr, amt = e[0], e[1], e[2]
+                if amt is not None:
+                    return f"- {pid} — {contr} — {format_money(float(amt))}"
+                else:
+                    return f"- {pid} — {contr}"
+            elif len(e) == 2:
+                pid, contr = e
+                return f"- {pid} — {contr}"
+            else:
+                return f"- {e}"
+
+        lines = [_format_entry(e) for e in prepared[:len(top_rows)]]
         header = (f"Top {len(top_rows)} projects by approved budget" + (f" {header_ctx}" if header_ctx else "") + ":\n")
         tail = "" if force_all or len(prepared) <= len(top_rows) else "\n\nWould you like 5 more projects?"
         return header + ("\n".join(lines) if lines else "No projects found.") + tail
@@ -1289,21 +1413,24 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         tmp = tmp[mask]
         if tmp.empty:
             return f"I couldn't find any projects for contractor {contractor_value}."
-        # Sort and take top N
-        N = top_n if 'top_n' in locals() else (parsed.get('top_n') or 5)
-        rows = tmp.sort_values(by=budget_col, ascending=False).head(N)
-        pid_col = find_project_id_column(tmp)
-        title_col = find_column(tmp, ['project_title', 'project_name', 'name', 'projecttitle'])
+        # Respect requested top_n but prepare the full sorted list for pagination
+        N_req = int(top_n if 'top_n' in locals() and top_n else (parsed.get('top_n') or 5))
+        tmp_sorted = tmp.sort_values(by=budget_col, ascending=False)
+        pid_col = find_project_id_column(tmp_sorted)
+        title_col = find_column(tmp_sorted, ['project_title', 'project_name', 'name', 'projecttitle'])
         lines = []
-        for _, r in rows.iterrows():
+        prepared: List[Tuple[str, str]] = []
+        for _, r in tmp_sorted.iterrows():
             pid = r.get(pid_col, 'N/A') if pid_col else 'N/A'
             title = r.get(title_col) if title_col else None
             amt = r.get(budget_col)
             if pd.notna(amt):
                 if title and str(title).strip():
-                    lines.append(f"- {pid}: {str(title).strip()} — ₱{float(amt):,.2f}")
+                    display = f"{str(title).strip()} — {format_money(float(amt))}"
                 else:
-                    lines.append(f"- {pid}: ₱{float(amt):,.2f}")
+                    display = f"{format_money(float(amt))}"
+                lines.append(f"- {pid}: {display}")
+                prepared.append((str(pid), display))
         # Context
         ctx = []
         if "region" in filters:
@@ -1313,7 +1440,16 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         if "province" in filters:
             ctx.append(str(filters['province']))
         header_ctx = (" in " + ", ".join(ctx)) if ctx else ""
-        return f"Top {len(rows)} projects with the highest approved budget for {contractor_value}{header_ctx}:\n" + ("\n".join(lines) if lines else "No projects found.")
+
+        # Store pagination and return the first page
+        header = f"Top {min(N_req, len(prepared))} projects with the highest approved budget for {contractor_value}{header_ctx}:"
+        _set_pagination("contractor", {"contractor": contractor_value}, prepared, header_ctx or f"for {contractor_value}")
+        page_n = min(N_req, 5)
+        _PAGINATION_STATE['offset'] = page_n
+        first_chunk = prepared[:page_n]
+        first_lines = [f"- {pid}: {display}" for pid, display in first_chunk]
+        tail = "" if len(prepared) <= page_n else "\n\nWould you like 5 more projects?"
+        return header + "\n" + ("\n".join(first_lines) if first_lines else "No projects found.") + tail
 
     # Top contractors by number of projects
     if action == "top_contractors_by_count":

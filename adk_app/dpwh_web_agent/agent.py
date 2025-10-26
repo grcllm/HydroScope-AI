@@ -28,7 +28,7 @@ from dpwh_web_agent.tools.memory import _load_precreated_dataset
 root_agent = Agent(
     model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
     name="root_agent",
-    description="DPWH analytics concierge using multiple sub-agents",
+    description="DPWH analytics agent using multiple sub-agents, Always greet the user first with a friendly welcome message.",
     instruction=prompt.ROOT_AGENT_INSTR,
     sub_agents=[
         data_prep_agent,

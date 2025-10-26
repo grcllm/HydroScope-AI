@@ -7,7 +7,7 @@ Design goals:
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import threading
 
 import pandas as pd
@@ -16,6 +16,7 @@ from dpwh_web_agent.dpwh_agent.agents.agent3_answer import (
     agent3_run,
     find_project_id_column,
 )
+from dpwh_web_agent.dpwh_agent.agents.agent3_answer import _set_pagination, _PAGINATION_STATE
 from dpwh_web_agent.dpwh_agent.utils.schema import find_column
 
 
@@ -333,13 +334,13 @@ def top_projects_for_contractor(contractor: str, top_n: int = 5) -> str:
     if sub.empty:
         return f"No projects with a valid approved budget for contractor {target}."
 
-    # Cap at 5 per requirement
-    n = min(int(top_n or 5), 5)
-    sub = sub.sort_values(by=budget_col, ascending=False).head(n)
+    # Respect requested top_n but prepare the full sorted list for pagination
+    n_req = int(top_n or 5)
+    tmp_sorted = sub.sort_values(by=budget_col, ascending=False)
 
-    pid_col = find_project_id_column(sub)
+    pid_col = find_project_id_column(tmp_sorted)
     lines: List[str] = []
-    for _, r in sub.iterrows():
+    for _, r in tmp_sorted.iterrows():
         pid = r.get(pid_col, "N/A")
         contr_val = r.get(contractor_col, target)
         amt = float(r[budget_col]) if pd.notna(r[budget_col]) else None
@@ -348,8 +349,25 @@ def top_projects_for_contractor(contractor: str, top_n: int = 5) -> str:
         else:
             lines.append(f"- {pid} — {contr_val}")
 
-    header = f"Top {len(lines)} projects by approved budget for {target}:"
-    return header + "\n" + ("\n".join(lines) if lines else "No projects found.")
+    # Prepare pagination state so follow-ups like 'more' work
+    prepared: List[Tuple[str, str]] = []
+    for line in lines:
+        # line format: '- PID — ...' -> extract pid and rest
+        l = line.lstrip('- ').strip()
+        parts = l.split(' — ', 1)
+        pid = parts[0]
+        rest = parts[1] if len(parts) > 1 else ''
+        prepared.append((pid, rest))
+
+    # Store pagination and return first page
+    header = f"Top {min(n_req, len(lines))} projects by approved budget for {target}:"
+    _set_pagination("contractor", {"contractor": target}, prepared, f"for {target}")
+    page_n = min(n_req, 5)
+    _PAGINATION_STATE['offset'] = page_n
+    first_chunk = prepared[:page_n]
+    first_lines = [f"- {pid} — {rest}" for pid, rest in first_chunk]
+    tail = "" if len(prepared) <= page_n else "\n\nWould you like 5 more projects?"
+    return header + "\n" + ("\n".join(first_lines) if first_lines else "No projects found.") + tail
 
 
 def top_projects_by_contractor_budget(contractor: str, top_n: int = 5) -> str:
