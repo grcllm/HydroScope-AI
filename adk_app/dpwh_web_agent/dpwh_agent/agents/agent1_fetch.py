@@ -2,17 +2,21 @@ import os
 import re
 from pathlib import Path
 import pandas as pd
-from dpwh_agent.utils.schema import normalize_column
+from dpwh_web_agent.dpwh_agent.utils.schema import normalize_column
 
 # Prefer robust, location-independent dataset discovery. Avoid creating directories at import time.
-KAGGLE_FILE = os.environ.get("KAGGLE_FILE", "cleaned_dpwh_flood_control_projects.csv")
+KAGGLE_FILE = os.environ.get("KAGGLE_FILE", "normalized_dpwh_flood_control_projects.csv")
 
 def _project_root() -> Path:
     """Return the repository root irrespective of current working directory.
 
-    This file is at <root>/dpwh_agent/agents/agent1_fetch.py → parents[2] is <root>.
+    Walk up until we find a README.md; fallback to top-most parent.
     """
-    return Path(__file__).resolve().parents[2]
+    p = Path(__file__).resolve()
+    for parent in p.parents:
+        if (parent / "README.md").exists():
+            return parent
+    return p.parents[-1]
 
 def _candidate_data_dirs() -> list[Path]:
     """Candidate directories to search for dataset files, in priority order."""
@@ -24,6 +28,7 @@ def _candidate_data_dirs() -> list[Path]:
     # Common in-repo locations
     candidates.append(root / "data")
     candidates.append(root / "dpwh_agent" / "data")
+    candidates.append(root / "adk_app" / "dpwh_web_agent" / "dpwh_agent" / "data")
     # De-duplicate while preserving order
     out: list[Path] = []
     seen = set()
@@ -45,7 +50,10 @@ def _resolve_dataset_path(file_name: str | None) -> Path:
     preferred_names: list[str] = []
     if file_name:
         preferred_names.append(file_name)
-    # Always consider the cleaned file first, then the raw
+    # Prefer a known-good normalized file first, then cleaned, then raw
+    # This avoids parsing issues observed in some "cleaned_*" exports where quoting breaks rows.
+    if "normalized_dpwh_flood_control_projects.csv" not in preferred_names:
+        preferred_names.append("normalized_dpwh_flood_control_projects.csv")
     if "cleaned_dpwh_flood_control_projects.csv" not in preferred_names:
         preferred_names.append("cleaned_dpwh_flood_control_projects.csv")
     if "dpwh_flood_control_projects.csv" not in preferred_names:
@@ -130,16 +138,19 @@ def agent1_run(file_name: str = None) -> Path:
     if missing:
         raise ValueError(f"Dataset is missing required columns: {missing}")
     
-    # Apply municipality cleaning if needed, and always write a normalized copy
-    # Write normalized CSV alongside the discovered dataset file
-    normalized_path = path.parent / ("normalized_" + path.name)
-    normalized_path.parent.mkdir(parents=True, exist_ok=True)
+    # Apply municipality cleaning if needed
     if 'municipality' in df.columns:
         has_parentheses = df['municipality'].astype(str).str.contains(r'\(', na=False).any()
         if has_parentheses:
             df['municipality'] = df['municipality'].apply(clean_municipality_value)
 
-    # Always write out a normalized CSV without overwriting original
+    # If the discovered path is already a normalized file, return it directly to avoid re-writing
+    if path.name.startswith("normalized_"):
+        return path
+
+    # Otherwise, write a normalized CSV alongside the discovered dataset file
+    normalized_path = path.parent / ("normalized_" + path.name)
+    normalized_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(normalized_path, index=False)
     return normalized_path
 
