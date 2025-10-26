@@ -2,13 +2,18 @@
 # Targets support common developer workflows on Windows and *nix.
 # Note: On Windows use the venv python/pip explicitly (.venv\Scripts\python.exe)
 
-PY := .venv/Scripts/python.exe
-PIP := .venv/Scripts/pip.exe
+ifeq ($(OS),Windows_NT)
+PY := .venv\\Scripts\\python.exe
+PIP := .venv\\Scripts\\pip.exe
+else
+PY := .venv/bin/python
+PIP := .venv/bin/pip
+endif
 REQS := requirements.txt
 AGENT := adk_app/dpwh_web_agent/agent.py
 
 .PHONY: help venv install install-timeout install-mirror test-imports run-agent run-adk \
-        download-wheelhouse wheelhouse-install install-no-index
+	download-wheelhouse wheelhouse-install install-no-index bootstrap env-example
 
 help:
 	@echo "Makefile targets:"
@@ -19,6 +24,7 @@ help:
 	@echo "  make test-imports       -> quick import sanity check for core deps"
 	@echo "  make run-agent          -> run ADK fallback entry (python $(AGENT))"
 	@echo "  make run-adk            -> run ADK web (requires `adk` CLI)"
+	@echo "  make bootstrap          -> create venv, install deps, and create .env template (quick start)"
 	@echo "  make download-wheelhouse -> download wheels for offline install into ./wheelhouse"
 	@echo "  make wheelhouse-install -> install from ./wheelhouse (offline install)"
 
@@ -29,6 +35,26 @@ venv:
 install: venv
 	@echo "Installing requirements into .venv"
 	@$(PIP) install -r $(REQS)
+
+
+.PHONY: bootstrap
+bootstrap: venv
+	@echo "Bootstrapping project: creating venv and installing dependencies..."
+	@$(PIP) install -r $(REQS)
+	@if [ -f .env ]; then \
+		echo ".env already exists"; \
+	else \
+		echo "GOOGLE_API_KEY=your_api_key_here" > .env; \
+		echo "GEMINI_MODEL=gemini-2.5-flash" >> .env; \
+		echo ".env created (edit with your credentials)"; \
+	fi
+	@echo "Bootstrap complete. Edit .env then run 'make run-adk' or 'make run-agent'."
+
+.PHONY: env-example
+env-example:
+	@echo "Creating .env.example with placeholders"
+	@printf "GOOGLE_API_KEY=your_api_key_here\nGEMINI_MODEL=gemini-2.5-flash\n" > .env.example
+	@echo ".env.example created. Copy to .env and fill in your values."
 
 install-timeout: venv
 	@echo "Installing requirements with longer timeout and retries"
