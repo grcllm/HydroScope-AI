@@ -27,8 +27,8 @@ def _candidate_data_dirs() -> list[Path]:
         candidates.append(Path(env_dir))
     # Common in-repo locations
     candidates.append(root / "data")
-    candidates.append(root / "dpwh_agent" / "data")
-    candidates.append(root / "adk_app" / "dpwh_web_agent" / "dpwh_agent" / "data")
+    # candidates.append(root / "dpwh_agent" / "data")
+    # candidates.append(root / "adk_app" / "dpwh_web_agent" / "dpwh_agent" / "data")
     # De-duplicate while preserving order
     out: list[Path] = []
     seen = set()
