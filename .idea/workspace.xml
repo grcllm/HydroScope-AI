@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="935ec71b-91c6-4fdd-ac3f-662cf36c4e4b" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/adk_app/dpwh_web_agent/agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/adk_app/dpwh_web_agent/agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/adk_app/dpwh_web_agent/sub_agents/analytics/agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/adk_app/dpwh_web_agent/sub_agents/analytics/agent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/adk_app/dpwh_web_agent/sub_agents/data_prep/agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/adk_app/dpwh_web_agent/sub_agents/data_prep/agent.py" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="MarkdownSettingsMigration">
+    <option name="stateVersion" value="1" />
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 3
+}]]></component>
+  <component name="ProjectId" id="34x9OFVNiIHujyfB9DMKeEqMb74" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "RunOnceActivity.OpenProjectViewOnStart": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "git-widget-placeholder": "frontend"
+  }
+}]]></component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-d68999036c7f-d3b881c8e49f-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-233.14475.56" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="935ec71b-91c6-4fdd-ac3f-662cf36c4e4b" name="Changes" comment="" />
+      <created>1762144329765</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1762144329765</updated>
+    </task>
+    <servers />
+  </component>
+</project>
