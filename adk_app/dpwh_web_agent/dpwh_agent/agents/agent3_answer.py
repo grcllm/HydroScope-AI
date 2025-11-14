@@ -1,4 +1,10 @@
-from typing import Dict, Optional, Any, List, Tuple
+from __future__ import annotations
+from typing import Dict, Optional, Any, List, Tuple, Union
+try:
+    from rapidfuzz import process as _rf_process, fuzz as _rf_fuzz
+except Exception:
+    _rf_process = None  # type: ignore
+    _rf_fuzz = None     # type: ignore
 import os
 import pandas as pd
 import re
@@ -24,7 +30,7 @@ _PAGINATION_STATE: Dict[str, Any] = {
     "header_ctx": "",          # cached header context text
 }
 
-def _set_pagination(mode: str, filters: dict, rows: List[Tuple[str, str, Any]] | List[Tuple[str, str]], header_ctx: str) -> None:
+def _set_pagination(mode: str, filters: dict, rows: Union[List[Tuple[str, str, Any]], List[Tuple[str, str]]], header_ctx: str) -> None:
     _PAGINATION_STATE.update({
         "mode": mode,
         "filters": filters,
@@ -63,6 +69,78 @@ def _consume_more(count: int = 5) -> Optional[str]:
     prefix = f"More projects{(' ' + _PAGINATION_STATE['header_ctx']) if _PAGINATION_STATE.get('header_ctx') else ''}:\n"
     return prefix + ("\n".join(lines)) + tail
 
+
+def _display_region(r: str) -> str:
+    """Normalize a region token to a consistent human-friendly display.
+    Examples:
+      - "2" -> "Region II"
+      - "iv-a"/"4a" -> "Region IV-A"
+      - "ncr"/"national capital region" -> "NCR"
+      - "car"/"cordillera administrative region" -> "CAR"
+      - otherwise, return with leading 'Region ' if it looks like a code
+    """
+    try:
+        if not isinstance(r, str):
+            return str(r)
+        s = r.strip().lower()
+        # common aliases
+        if any(x in s for x in ["national capital region", "ncr", "metro manila", "metropolitan manila"]):
+            return "NCR"
+        if any(x in s for x in ["cordillera", "car", "cordillera administrative region"]):
+            return "CAR"
+        # iv-a / iv-b / 4a / 4b
+        if re.fullmatch(r"(region\s*)?(iv|4)\s*-?\s*a", s):
+            return "Region IV-A"
+        if re.fullmatch(r"(region\s*)?(iv|4)\s*-?\s*b", s):
+            return "Region IV-B"
+        # numeric like "2"
+        if s.isdigit():
+            roman = ROMAN_MAP.get(s, s).upper()
+            return f"Region {roman}"
+        # patterns like "region 2", "region ii"
+        m = re.match(r"region\s*([0-9ivx\-ab]+)", s)
+        if m:
+            token = m.group(1)
+            if token in {"iv-a", "4-a", "4a", "iva"}:
+                return "Region IV-A"
+            if token in {"iv-b", "4-b", "4b", "ivb"}:
+                return "Region IV-B"
+            if token.isdigit():
+                roman = ROMAN_MAP.get(token, token).upper()
+                return f"Region {roman}"
+            return f"Region {token.upper()}"
+        # known descriptive names like "davao region"
+        if s.endswith(" region"):
+            return s.title()
+        # fallback: title case
+        return s.title()
+    except Exception:
+        return str(r)
+
+
+def _place_context(filters: Dict[str, Any]) -> str:
+    """Build a consistent 'in ...' location phrase from filters."""
+    if not filters:
+        return ""
+    parts: List[str] = []
+    if filters.get("municipality"):
+        parts.append(_display_municipality(str(filters["municipality"])))
+    if filters.get("province"):
+        parts.append(str(filters["province"]))
+    if filters.get("region"):
+        parts.append(_display_region(str(filters["region"])))
+    if filters.get("main_island"):
+        parts.append(str(filters["main_island"]).title())
+    if filters.get("project_location"):
+        parts.append(str(filters["project_location"]))
+    if filters.get("multi_locations"):
+        try:
+            ml = [str(x) for x in filters.get("multi_locations", [])]
+            if ml:
+                parts.append(" or ".join(ml))
+        except Exception:
+            pass
+    return (" in " + ", ".join([p for p in parts if p])) if parts else ""
 
 
 def _today_year() -> int:
@@ -189,19 +267,54 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, Any]:
                 return filters
 
         # 2) token-based match (e.g., 'paranaque' within 'paranaque metropolitan manila')
+        # Prioritize matches where the token appears in the city name, not just the region suffix
         p_tokens = set(p_norm.split())
+        best_match = None
+        best_score = 0
+        
         for norm, tokens, canon in norm_map:
-            if any(t in p_tokens for t in tokens):
-                filters["municipality"] = canon
-                province_col = find_column(df, ["province"])
-                if province_col is not None:
-                    provinces = df[province_col].dropna().astype(str).unique()
-                    prov_norm_map = sorted((( _normalize_text(prov), prov) for prov in provinces), key=lambda x: len(x[0]), reverse=True)
-                    for prov_norm, prov_canon in prov_norm_map:
-                        if prov_norm and re.search(rf"\b{re.escape(prov_norm)}\b", p_norm):
-                            filters["province"] = prov_canon
+            matched_tokens = [t for t in tokens if t in p_tokens]
+            if matched_tokens:
+                # Score based on position: earlier tokens (city name) score higher
+                # Split normalized string and check position of matched token
+                norm_parts = norm.split()
+                match_score = 0
+                for mt in matched_tokens:
+                    if mt in norm_parts:
+                        pos = norm_parts.index(mt)
+                        # Earlier position = higher score (inverse of position)
+                        match_score += (10 - pos) if pos < 10 else 1
+                
+                if match_score > best_score:
+                    best_score = match_score
+                    best_match = canon
+        
+        if best_match:
+            filters["municipality"] = best_match
+            province_col = find_column(df, ["province"])
+            if province_col is not None:
+                provinces = df[province_col].dropna().astype(str).unique()
+                prov_norm_map = sorted((( _normalize_text(prov), prov) for prov in provinces), key=lambda x: len(x[0]), reverse=True)
+                for prov_norm, prov_canon in prov_norm_map:
+                    if prov_norm and re.search(rf"\b{re.escape(prov_norm)}\b", p_norm):
+                        filters["province"] = prov_canon
+                        break
+            return filters
+
+        # 3) Fuzzy municipality match using RapidFuzz as a last resort
+        if "municipality" not in filters and _rf_process is not None and _rf_fuzz is not None:
+            try:
+                norm_values = {canon: _normalize_text(canon) for canon in municipalities}
+                choices = list(norm_values.values())
+                best = _rf_process.extractOne(p_norm, choices, scorer=_rf_fuzz.WRatio, score_cutoff=87)
+                if best:
+                    best_norm = best[0]
+                    for canon, nrm in norm_values.items():
+                        if nrm == best_norm:
+                            filters["municipality"] = canon
                             break
-                return filters
+            except Exception:
+                pass
 
     # Multi-location in municipality/province: "in Pasig or Quezon City" / "in Laguna and Cavite"
     # Capture tokens after 'in' split by 'or/and,/'
@@ -209,6 +322,24 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, Any]:
     if m_multi and (find_column(df, ["municipality"]) or find_column(df, ["province"])):
         raw = m_multi.group(1)
         items = [it.strip() for it in re.split(r"\s*(?:,|\/|\band\b|\bor\b)\s*", raw) if it.strip()]
+        # Fuzzy-canonicalize each item against known municipalities and provinces
+        if _rf_process is not None and _rf_fuzz is not None:
+            muni_col = find_column(df, ["municipality", "city"])
+            prov_col = find_column(df, ["province"])
+            muni_vals = df[muni_col].dropna().astype(str).unique().tolist() if muni_col else []
+            prov_vals = df[prov_col].dropna().astype(str).unique().tolist() if prov_col else []
+            choices = list(muni_vals) + list(prov_vals)
+            # lowercase lookup for robust matching
+            lower_map = {c.lower(): c for c in choices}
+            lower_choices = list(lower_map.keys())
+            canon_items = []
+            for it in items:
+                try:
+                    best = _rf_process.extractOne(it.lower(), lower_choices, scorer=_rf_fuzz.WRatio, score_cutoff=70)
+                    canon_items.append(lower_map.get(best[0], it) if best else it)
+                except Exception:
+                    canon_items.append(it)
+            items = canon_items
         if items:
             filters["multi_locations"] = items
 
@@ -222,6 +353,20 @@ def detect_filters(prompt: str, df: pd.DataFrame) -> Dict[str, Any]:
                 if prov_norm and re.search(rf"\b{re.escape(prov_norm)}\b", p_norm):
                     filters["province"] = prov_canon
                     return filters
+            # Fuzzy province match if still not found
+            if _rf_process is not None and _rf_fuzz is not None and "province" not in filters:
+                try:
+                    norm_values = {canon: _normalize_text(canon) for canon in provinces}
+                    choices = list(norm_values.values())
+                    best = _rf_process.extractOne(p_norm, choices, scorer=_rf_fuzz.WRatio, score_cutoff=88)
+                    if best:
+                        best_norm = best[0]
+                        for canon, nrm in norm_values.items():
+                            if nrm == best_norm:
+                                filters["province"] = canon
+                                break
+                except Exception:
+                    pass
 
     # Fallback: project_location
     project_loc_col = find_column(df, ["project_location", "location", "site_location"])
@@ -376,7 +521,8 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
             return {"action": "more_projects", "count": 5}
 
     # Count pattern - CHECK THIRD (Enhanced with contractor-specific logic)
-    if "how many" in p or p.startswith("how many"):
+    # Also accept "number of" pattern
+    if "how many" in p or p.startswith("how many") or "number of" in p:
         filters = detect_filters(prompt, df)
 
         # Special handling for contractor queries
@@ -456,15 +602,17 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
         time_filters = _parse_time_filters(prompt)
         return {"action": "count", "filters": filters, "column": None, "time": time_filters}
 
-    # Top contractors by total budget (prioritize before generic sum)
-    if re.search(r"top\s+\d+\s+contractors\s+by\s+(?:total\s+)?budget", p):
+    # Top contractors by total budget (prioritize before generic sum) with fuzzy keyword tolerance
+    # Allow any text between "contractors" and "by" to handle filters like "in region 2"
+    if re.search(r"top\s+\d+\s+contr[a-z]*ors?.*?\s+by\s+(?:total\s+)?budg[a-z]*", p):
         filters = detect_filters(prompt, df)
         time_filters = _parse_time_filters(prompt)
         top_n = _parse_top_n(prompt) or 5
         return {"action": "top_contractors", "filters": filters, "column": "approved_budget_num", "top_n": top_n, "time": time_filters}
 
     # Top contractors by number of projects
-    if re.search(r"top\s+\d+\s+contractors\s+by\s+(?:number\s+of\s+projects|project\s+count|projects)", p):
+    # Allow any text between "contractors" and "by" to handle filters
+    if re.search(r"top\s+\d+\s+contr[a-z]*ors?.*?\s+by\s+(?:number\s+of\s+projects|project\s+count|projects)", p):
         filters = detect_filters(prompt, df)
         time_filters = _parse_time_filters(prompt)
         top_n = _parse_top_n(prompt) or 10
@@ -487,8 +635,8 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
         time_filters = _parse_time_filters(prompt)
         return {"action": "sum", "column": "approved_budget_num", "filters": filters, "time": time_filters}
 
-    # Trend by year
-    if re.search(r"(trend|by year|per year)", p) and ("total" in p or "budget" in p):
+    # Trend by year: accept 'trend' intent even without explicit 'budget/total' keyword
+    if re.search(r"(trend|by year|per year)", p):
         filters = detect_filters(prompt, df)
         return {"action": "trend_by_year", "filters": filters, "column": "approved_budget_num"}
 
@@ -737,6 +885,205 @@ def find_project_id_column(df: pd.DataFrame) -> str:
 
 REQUIRE_CONFIRM = str(os.environ.get("REQUIRE_CONFIRM", "0")).lower() in {"1", "true", "yes", "on"}
 
+# Common typo corrections applied before parsing to make intent robust to misspellings
+_TYPO_MAP = {
+    # Budget variations
+    "budjet": "budget", "budgget": "budget", "bdgst": "budget", "bdgt": "budget",
+    "budgt": "budget", "bugdet": "budget", "budg": "budget", "buget": "budget",
+    "budgit": "budget", "bduget": "budget",
+    # Approved variations
+    "aproved": "approved", "apprved": "approved", "approvd": "approved",
+    "aprooved": "approved", "aprroved": "approved",
+    # Contractor/Contractors variations
+    "contrator": "contractor", "contructor": "contractor", "contractr": "contractor",
+    "contracter": "contractor", "contarctor": "contractor", "contractorr": "contractor",
+    "contrators": "contractors", "contractrs": "contractors",
+    # Municipality variations
+    "municpality": "municipality", "municapality": "municipality", "munici pality": "municipality",
+    "municipalty": "municipality", "municiplaity": "municipality",
+    # Province variations
+    "provnce": "province", "provice": "province", "provonce": "province",
+    # Region variations
+    "reigon": "region", "regin": "region", "regoin": "region", "rgion": "region",
+    # Trend variations
+    "trnd": "trend", "trned": "trend", "tren": "trend", "tremd": "trend",
+    # Completion variations
+    "completin": "completion", "compeltion": "completion", "comletion": "completion",
+    # Start variations
+    "strt": "start", "strart": "start",
+    # Project variations
+    "prject": "project", "projet": "project", "projct": "project", "proect": "project",
+    "prjct": "project", "prjcts": "projects", "prjects": "projects", "projcts": "projects",
+    # Total variations
+    "totl": "total", "tota": "total", "totle": "total",
+    # Cost variations
+    "cst": "cost", "cots": "cost",
+    # Other common words
+    "highst": "highest", "heighest": "highest", "higest": "highest",
+    "lowst": "lowest", "loest": "lowest",
+    "numbr": "number", "nmber": "number",
+    "whch": "which", "wich": "which",
+    "loction": "location", "locatin": "location",
+    # Question words
+    "hw": "how", "hwo": "how", "haw": "how",
+    "mny": "many", "mani": "many", "manuy": "many",
+    "wht": "what", "waht": "what",
+    "dos": "does", "dose": "does", "deos": "does",
+    "hve": "have", "hav": "have", "haf": "have",
+    # Common place typos
+    "cavte": "cavite", "cavit": "cavite",
+    "manilaaa": "manila", "manilla": "manila", "maniala": "manila",
+    "lagunna": "laguna", "laguna": "laguna",
+    "hwmany": "how many",
+}
+
+def _apply_typo_corrections(s: str) -> str:
+    if not isinstance(s, str):
+        return s
+    out = s
+    for bad, good in _TYPO_MAP.items():
+        out = re.sub(rf"\b{re.escape(bad)}\b", good, out, flags=re.IGNORECASE)
+    return out
+
+# Optional fuzzy keyword fixer to catch severe misspellings of core terms
+_CORE_KEYWORDS = [
+    "budget", "approved", "total", "trend", "contractor", "contractors",
+    "region", "municipality", "province", "project", "projects",
+    "count", "highest", "lowest", "top", "by", "year",
+    "how", "many", "what", "which", "where", "who",
+    "in", "of", "the", "has", "have", "with",
+]
+
+def _apply_keyword_fuzzy(s: str) -> str:
+    if _rf_process is None or _rf_fuzz is None or not isinstance(s, str):
+        return s
+    tokens = s.split()
+    corrected = []
+    for tok in tokens:
+        raw = tok.lower().strip('.,!?;:')
+        if not raw or len(raw) < 2:
+            corrected.append(tok)
+            continue
+        try:
+            # Use threshold of 85 to avoid false positives (e.g., "manila" → "many")
+            # Most location names should be handled by typo_map or dynamic_vocab_fuzzy
+            res = _rf_process.extractOne(raw, _CORE_KEYWORDS, scorer=_rf_fuzz.WRatio, score_cutoff=85)
+            if res and res[1] >= 85:
+                # Add length similarity check to prevent short words matching long words
+                # (e.g., "mindanao" → "in" at 90% score due to substring match)
+                len_ratio = abs(len(raw) - len(res[0])) / max(len(raw), len(res[0]))
+                if len_ratio < 0.5:  # Length difference must be within 50%
+                    # Preserve capitalization
+                    if tok[0].isupper():
+                        corrected.append(res[0].capitalize())
+                    else:
+                        corrected.append(res[0])
+                else:
+                    corrected.append(tok)
+            else:
+                corrected.append(tok)
+        except Exception:
+            corrected.append(tok)
+    return ' '.join(corrected)
+
+
+def _dynamic_vocab_fuzzy(question: str, df: pd.DataFrame) -> str:
+    """Expand fuzzy correction to dynamic vocabulary (municipalities, provinces, contractors)
+    plus core intent keywords to better handle arbitrary typos.
+    Uses multiple passes and lowered thresholds for universal typo tolerance.
+    """
+    if _rf_process is None or _rf_fuzz is None or not isinstance(question, str):
+        return question
+    try:
+        muni_col = find_column(df, ["municipality", "city"])
+        prov_col = find_column(df, ["province"]) 
+        contractor_col = find_column(df, ["contractor", "contractor_name", "winning_contractor"])
+        muni_vals = df[muni_col].dropna().astype(str).unique().tolist() if muni_col else []
+        prov_vals = df[prov_col].dropna().astype(str).unique().tolist() if prov_col else []
+        contractor_vals = df[contractor_col].dropna().astype(str).unique().tolist() if contractor_col else []
+        
+        # limit contractor vocab size for performance
+        if len(contractor_vals) > 8000:
+            contractor_vals = contractor_vals[:8000]
+        
+        # Build comprehensive vocabulary with priority groups
+        # Priority 1: Core keywords (high confidence needed)
+        core_vocab = set(_CORE_KEYWORDS)
+        
+        # Priority 2: Location names (municipalities, provinces, islands)
+        # Extract individual tokens from location strings to enable partial matching
+        location_vocab = set()
+        # Add major island names explicitly to prevent confusion with contractor names
+        location_vocab.update(['luzon', 'visayas', 'mindanao'])
+        for v in muni_vals + prov_vals:
+            # Add full location string (lowercased)
+            location_vocab.add(v.lower())
+            # Also add individual significant tokens (5+ chars, excluding common stopwords)
+            tokens = re.findall(r'\b\w{5,}\b', v.lower())
+            stopwords = {'city', 'of', 'municipality', 'province', 'metropolitan'}
+            location_vocab.update([t for t in tokens if t not in stopwords])
+        
+        # Priority 3: Contractor names (lower confidence ok)
+        contractor_vocab = set([v.lower() for v in contractor_vals])
+        
+        # Multi-pass fuzzy correction with different thresholds
+        tokens = question.split()
+        corrected_tokens = []
+        
+        for tok in tokens:
+            raw = tok.lower().strip('.,!?;:')
+            if len(raw) < 2:
+                corrected_tokens.append(tok)
+                continue
+                
+            # Skip if already exact match in any vocab
+            if raw in core_vocab or raw in location_vocab or raw in contractor_vocab:
+                corrected_tokens.append(tok)
+                continue
+            
+            corrected = None
+            
+            # Pass 1: Try core keywords first (strict threshold)
+            try:
+                best = _rf_process.extractOne(raw, list(core_vocab), scorer=_rf_fuzz.WRatio, score_cutoff=82)
+                if best and best[1] >= 82:
+                    corrected = best[0]
+            except Exception:
+                pass
+            
+            # Pass 2: Try location names (medium threshold, but check similarity)
+            if not corrected and len(raw) >= 4:
+                try:
+                    best = _rf_process.extractOne(raw, list(location_vocab), scorer=_rf_fuzz.WRatio, score_cutoff=82)
+                    if best and best[1] >= 82:
+                        # Extra check: corrected word should be similar in length (within 50%)
+                        if abs(len(raw) - len(best[0])) / max(len(raw), len(best[0])) < 0.5:
+                            corrected = best[0]
+                except Exception:
+                    pass
+            
+            # Pass 3: Try contractor names (lower threshold, longer words only)
+            if not corrected and len(raw) >= 4:
+                try:
+                    best = _rf_process.extractOne(raw, list(contractor_vocab), scorer=_rf_fuzz.WRatio, score_cutoff=70)
+                    if best and best[1] >= 70:
+                        corrected = best[0]
+                except Exception:
+                    pass
+            
+            # Use corrected token or keep original
+            if corrected:
+                # Preserve original capitalization pattern
+                if tok[0].isupper():
+                    corrected = corrected.capitalize()
+                corrected_tokens.append(corrected)
+            else:
+                corrected_tokens.append(tok)
+        
+        return ' '.join(corrected_tokens)
+    except Exception:
+        return question
+
 def _clarify_message(parsed: dict, df: pd.DataFrame) -> str:
     action = parsed.get("action")
     filters = parsed.get("filters", {})
@@ -793,6 +1140,15 @@ def _clarify_message(parsed: dict, df: pd.DataFrame) -> str:
 
 
 def agent3_run(question: str, df: pd.DataFrame) -> str:
+    # Apply multiple passes of typo correction for maximum robustness
+    # Pass 1: Static typo map (instant, covers common patterns)
+    question = _apply_typo_corrections(question)
+    # Pass 2: Fuzzy keyword correction (core intent words)
+    question = _apply_keyword_fuzzy(question)
+    # Pass 3: Dynamic dataset-driven fuzzy correction (locations, contractors)
+    question = _dynamic_vocab_fuzzy(question, df)
+    # Pass 4: Apply typo corrections again after fuzzy to catch remaining issues
+    question = _apply_typo_corrections(question)
     parsed = simple_parse(question, df)
     action = parsed["action"]
     filters = parsed["filters"]
@@ -1037,7 +1393,14 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         if "project_location" in filters:
             place_parts.append(filters['project_location'])
         
-        place_description = ", ".join(place_parts) if place_parts else list(filters.values())[0]
+        if place_parts:
+            place_description = ", ".join(place_parts)
+        else:
+            first_val = list(filters.values())[0]
+            if isinstance(first_val, list):
+                place_description = ", ".join(map(str, first_val))
+            else:
+                place_description = str(first_val)
         # Try to suggest nearest municipality/province by simple token inclusion
         suggestions = []
         try:
@@ -1059,28 +1422,9 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
     if action == "count":
         n = len(sub)
         if filters:
-            # Create a more descriptive place name
-            place_parts = []
-            if "contractor" in filters:
-                place_parts.append(f"contractor {filters['contractor']}")
-            if "municipality" in filters:
-                place_parts.append(f"municipality of {filters['municipality']}")
-            if "province" in filters:
-                place_parts.append(f"province of {filters['province']}")
-            if "region" in filters:
-                place_parts.append(f"Region {filters['region']}")
-            if "main_island" in filters:
-                place_parts.append(filters['main_island'])
-            if "project_location" in filters:
-                place_parts.append(filters['project_location'])
-            
-            place_description = ", ".join(place_parts) if place_parts else list(filters.values())[0]
-            
-            # Special formatting for contractor queries
             if "contractor" in filters:
                 return f"{filters['contractor']} has {n} flood control projects."
-            else:
-                return f"There are {n} flood control projects in {place_description.title()}."
+            return f"There are {n} flood control projects{_place_context(filters)}."
         return f"There are {n} flood control projects in the dataset."
 
     # Sum budget
@@ -1103,21 +1447,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 return "Total approved budget by location:\n" + ("\n".join(lines) if lines else "No matching locations.")
         total = sub_num[budget_col].sum()
         if filters:
-            # Create a more descriptive place name
-            place_parts = []
-            if "municipality" in filters:
-                place_parts.append(f"municipality of {filters['municipality']}")
-            if "province" in filters:
-                place_parts.append(f"province of {filters['province']}")
-            if "region" in filters:
-                place_parts.append(f"Region {filters['region']}")
-            if "main_island" in filters:
-                place_parts.append(filters['main_island'])
-            if "project_location" in filters:
-                place_parts.append(filters['project_location'])
-            
-            place_description = ", ".join(place_parts) if place_parts else list(filters.values())[0]
-            return f"The total approved budget in {place_description.title()} is ₱{total:,.2f}."
+            return f"The total approved budget{_place_context(filters)} is ₱{total:,.2f}."
         return f"The total approved budget for all projects is ₱{total:,.2f}."
     
     # Minimum budget
@@ -1314,14 +1644,9 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 amt_val = None
             prepared.append((str(pid), str(contractor), amt_val))
         # Store pagination state then render the first chunk
-        ctx = []
-        if "municipality" in filters:
-            ctx.append(_display_municipality(filters['municipality']))
-        if "province" in filters:
-            ctx.append(str(filters['province']))
-        if "region" in filters:
-            ctx.append(f"Region {filters['region']}")
-        header_ctx = f"in {', '.join(ctx)}" if ctx else ""
+        header_ctx = _place_context(filters).strip()
+        if header_ctx.startswith("in "):
+            header_ctx = header_ctx
         _set_pagination("location", filters, prepared, header_ctx)
         # consume first portion (min(5) unless force_all)
         _PAGINATION_STATE['offset'] = len(top_rows)
@@ -1337,7 +1662,6 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
                 return f"- {pid} — {contr}"
             else:
                 return f"- {e}"
-
         lines = [_format_entry(e) for e in prepared[:len(top_rows)]]
         header = (f"Top {len(top_rows)} projects by approved budget" + (f" {header_ctx}" if header_ctx else "") + ":\n")
         tail = "" if force_all or len(prepared) <= len(top_rows) else "\n\nWould you like 5 more projects?"
@@ -1360,7 +1684,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         grp[budget_col] = pd.to_numeric(grp[budget_col], errors='coerce')
         top = grp.groupby(contractor_col, dropna=True)[budget_col].sum().sort_values(ascending=False).head(top_n)
         lines = [f"- {k}: ₱{float(v):,.2f}" for k, v in top.items()]
-        return f"Top {top_n} contractors by total budget:\n" + "\n".join(lines)
+        return f"Top {top_n} contractors by total budget{_place_context(filters)}:\n" + "\n".join(lines)
 
     # Contractor with highest total/approved budget (single winner; tie-aware)
     if action == "contractor_max_total_budget":
@@ -1390,10 +1714,10 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         in_ctx = f" in {', '.join(ctx)}" if ctx else ""
 
         if len(top_contractors) == 1:
-            return f"The contractor with the highest total approved budget{in_ctx} is {top_contractors[0]} with ₱{max_total:,.2f}."
+            return f"The contractor with the highest total approved budget{_place_context(filters)} is {top_contractors[0]} with ₱{max_total:,.2f}."
         else:
             names = ", ".join(top_contractors)
-            return f"There is a tie for the highest total approved budget{in_ctx}: {names} with ₱{max_total:,.2f} each."
+            return f"There is a tie for the highest total approved budget{_place_context(filters)}: {names} with ₱{max_total:,.2f} each."
 
     # Top N projects with highest approved budget for a contractor
     if action == "top_projects_by_contractor_budget":
@@ -1439,9 +1763,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             ctx.append(_display_municipality(filters['municipality']))
         if "province" in filters:
             ctx.append(str(filters['province']))
-        header_ctx = (" in " + ", ".join(ctx)) if ctx else ""
-
-        # Store pagination and return the first page
+        header_ctx = _place_context(filters)
         header = f"Top {min(N_req, len(prepared))} projects with the highest approved budget for {contractor_value}{header_ctx}:"
         _set_pagination("contractor", {"contractor": contractor_value}, prepared, header_ctx or f"for {contractor_value}")
         page_n = min(N_req, 5)
@@ -1479,7 +1801,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             ctx.append(prov_disp)
         if "region" in filters:
             ctx.append(f"Region {filters['region']}")
-        prefix = f"Top {top_n} contractors by number of projects" + (f" in {', '.join(ctx)}" if ctx else "")
+        prefix = f"Top {top_n} contractors by number of projects{_place_context(filters)}"
         lines = [f"- {k}: {int(v)} project(s)" for k, v in counts.items()]
         return prefix + ":\n" + ("\n".join(lines) if len(lines) > 0 else "No contractor data found.")
 
@@ -1514,10 +1836,10 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         in_ctx = f" in {', '.join(ctx)}" if ctx else ""
 
         if len(top_contractors) == 1:
-            return f"The contractor with the highest number of projects{in_ctx} is {top_contractors[0]} with {max_count} project(s)."
+            return f"The contractor with the highest number of projects{_place_context(filters)} is {top_contractors[0]} with {max_count} project(s)."
         else:
             names = ", ".join(top_contractors)
-            return f"There is a tie for the highest number of projects{in_ctx}: {names} with {max_count} project(s) each."
+            return f"There is a tie for the highest number of projects{_place_context(filters)}: {names} with {max_count} project(s) each."
 
     # Trend by year (total budget per year)
     if action == "trend_by_year":
@@ -1532,7 +1854,7 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         tmp[budget_col] = pd.to_numeric(tmp[budget_col], errors='coerce')
         series = tmp.groupby('year')[budget_col].sum().sort_index()
         lines = [f"- {int(y)}: ₱{float(v):,.2f}" for y, v in series.items() if pd.notna(y)]
-        return "Total approved budget by year:\n" + ("\n".join(lines) if lines else "No yearly data available")
+        return f"Total approved budget by year{_place_context(filters)}:\n" + ("\n".join(lines) if lines else "No yearly data available")
 
     # Municipality with highest total budget in a region/area
     if action == "municipality_max_total":
@@ -1547,6 +1869,6 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
             return "No municipalities found for that area."
         muni = agg.index[0]
         total = agg.iloc[0]
-        return f"The municipality with the highest total approved budget is {_display_municipality(str(muni))} with ₱{float(total):,.2f}."
+        return f"The municipality with the highest total approved budget{_place_context(filters)} is {_display_municipality(str(muni))} with ₱{float(total):,.2f}."
 
     return "Sorry — I couldn't understand the question."
