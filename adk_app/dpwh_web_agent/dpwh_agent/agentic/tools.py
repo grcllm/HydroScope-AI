@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 import threading
+import re
 
 import pandas as pd
 
@@ -74,6 +75,51 @@ def _fmt_place_token(token: str) -> str:
     if low.startswith("region "):
         return t
     return t
+
+
+def _parse_years_input(year_str: str) -> Optional[List[int]]:
+    """Parse a year or a small range/list string into a list of years.
+
+    Examples supported:
+    - "2020" -> [2020]
+    - "2020-2022" or "2020 to 2022" -> [2020,2021,2022]
+    - "2020,2021,2022" -> [2020,2021,2022]
+    - "20-22" -> [2020,2021,2022]
+    Returns None if no parseable numbers found.
+    """
+    if not year_str:
+        return None
+    s = str(year_str).strip()
+    if not s:
+        return None
+
+    s_clean = s.replace('\u2013', '-').replace('\u2014', '-')  # normalize dashes
+
+    # Range like 2020-2022 or 20-22 or "2020 to 2022"
+    m = re.search(r"(\d{2,4})\s*(?:-|–|—|to)\s*(\d{2,4})", s_clean, flags=re.IGNORECASE)
+    if m:
+        a = int(m.group(1))
+        b = int(m.group(2))
+        # Normalize two-digit years to 2000s
+        if a < 100:
+            a += 2000
+        if b < 100:
+            # keep same century as a
+            b += (a // 100) * 100
+        start, end = min(a, b), max(a, b)
+        return list(range(start, end + 1))
+
+    # Otherwise collect any 2-4 digit numbers (comma separated or space separated)
+    nums = re.findall(r"\d{2,4}", s_clean)
+    years: List[int] = []
+    for n in nums:
+        y = int(n)
+        if y < 100:
+            y += 2000
+        years.append(y)
+    if years:
+        return sorted(list(dict.fromkeys(years)))
+    return None
 
 
 def answer_dpwh_question(question: str) -> str:
@@ -243,6 +289,73 @@ def count_projects(municipality: Optional[str] = None,
     if place:
         q += f" in {' ,'.join(place)}"
     return _agent_answer(q)
+
+
+def count_projects_in_year(year: Optional[str] = None) -> str:
+    """Return the number of projects for a specific funding year.
+
+    Args:
+        year: Year as a string (e.g. "2020"). If omitted, asks for a year.
+
+    Returns:
+        A short human-readable string with the project count for that year.
+    """
+    df = _require_df()
+    if year is None or str(year).strip() == "":
+        return "Please provide a funding year (e.g., 2020)."
+
+    # Find a likely year column — try several common variants for robustness
+    year_col = find_column(df, [
+        "funding_year",
+        "funding year",
+        "fundingyear",
+        "year",
+        "fy",
+        "funding_years",
+    ])
+    if year_col is None:
+        # Fall back to agent parsing which may understand date-like columns
+        return _agent_answer(f"how many projects in the year {year}")
+
+    # Parse the input which may be a single year, a list, or a range
+    years = _parse_years_input(str(year))
+    if not years:
+        return "Please provide a funding year (e.g., 2020) or a range like 2020-2022."
+
+    # Coerce year column to numeric once
+    series = pd.to_numeric(df[year_col], errors="coerce")
+
+    if len(years) == 1:
+        y = years[0]
+        count = int((series == y).sum())
+        if count == 0:
+            return _agent_answer(f"how many projects in the year {y}")
+        return f"There {'is' if count==1 else 'are'} {count} project{'' if count==1 else 's'} in the year {y}."
+
+    # Multiple years requested — compute per-year counts and total
+    per_year: Dict[int, int] = {}
+    total = 0
+    for y in years:
+        c = int((series == y).sum())
+        per_year[y] = c
+        total += c
+
+    # If everything is zero, allow the agent a chance to answer more flexibly
+    if total == 0:
+        return _agent_answer(f"how many projects in the years {str(year)}")
+
+    # Build a compact human-readable response
+    years_sorted = sorted(per_year.keys())
+    # compact range display if contiguous
+    if years_sorted == list(range(years_sorted[0], years_sorted[-1] + 1)) and len(years_sorted) > 1:
+        range_label = f"{years_sorted[0]}–{years_sorted[-1]}"
+    else:
+        range_label = ", ".join(str(y) for y in years_sorted)
+
+    details = ", ".join(f"{y}: {per_year[y]}" for y in years_sorted)
+    plural = 'are' if total != 1 else 'is'
+    proj_word = 'projects' if total != 1 else 'project'
+    return f"There {plural} {total} {proj_word} in {range_label} ({details})."
 
 
 def highest_budget(top_n: int = 1, municipality: Optional[str] = None,
@@ -528,6 +641,7 @@ def tools_list() -> List[Any]:
         lookup_project,
         # Totals and counts
         count_projects,
+        count_projects_in_year,
         total_approved_budget,
         budget_trend_by_year,
         municipality_max_total,

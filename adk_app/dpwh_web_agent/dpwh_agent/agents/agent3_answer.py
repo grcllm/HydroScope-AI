@@ -254,6 +254,30 @@ def _parse_time_filters(prompt: str) -> Dict[str, Any]:
         a, b = int(m.group(1)), int(m.group(2))
         t["year_range"] = (min(a,b), max(a,b))
         return t
+    # Year range with hyphen or 'to', e.g. '2021-2023' or '2021 to 2023'
+    m = re.search(r"(\d{2,4})\s*(?:-|–|—|to)\s*(\d{2,4})", p)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        # normalize two-digit years to 2000s
+        if a < 100:
+            a += 2000
+        if b < 100:
+            b += (a // 100) * 100
+        t["year_range"] = (min(a,b), max(a,b))
+        return t
+    # Comma or space separated list of years: '2020,2021' or '2020 2021'
+    nums = re.findall(r"\d{2,4}", p)
+    if len(nums) >= 2:
+        years = []
+        for n in nums:
+            y = int(n)
+            if y < 100:
+                y += 2000
+            years.append(y)
+        # unique and sorted
+        years = sorted(list(dict.fromkeys(years)))
+        t["years"] = years
+        return t
     # Single year: in 2023 / for 2024
     m = re.search(r"\b(in|for)\s+(\d{4})\b", p)
     if m:
@@ -694,6 +718,16 @@ def _apply_time_filters(df: pd.DataFrame, time_spec: Optional[Dict[str, Any]]) -
             out = out[pd.to_datetime(out[start_col], errors='coerce').dt.year == y]
         elif year_col is not None:
             out = out[out[year_col].astype(str) == str(y)]
+
+    # Multiple explicit years (list)
+    if "years" in time_spec:
+        years = [int(x) for x in time_spec["years"]]
+        if start_col is not None:
+            ys = pd.to_datetime(out[start_col], errors='coerce').dt.year
+            out = out[ys.isin(years)]
+        elif year_col is not None:
+            ys = pd.to_numeric(out[year_col], errors='coerce')
+            out = out[ys.isin(years)]
 
     # Year range
     if "year_range" in time_spec:
