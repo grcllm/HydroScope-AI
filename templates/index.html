@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Messenger-Style Chat</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+
+    <div class="orbs" aria-hidden="true">
+      <div class="orb orb-a"></div>
+      <div class="orb orb-b"></div>
+      <div class="orb orb-c"></div>
+      <div class="orb orb-d"></div>
+    </div>
+
+    <div class="app-frame">
+      <header class="topbar no-bg">
+        <div class="bot-id">
+            <div class="avatar bot-avatar" aria-hidden="true">
+              <img src="https://img.icons8.com/windows/64/chatbot.png" alt="chatbot" style="width:24px; height:24px; object-fit:contain;">
+            </div>
+          <div class="meta">
+            <div class="title">Agent</div>
+          </div>
+        </div>
+        <div class="actions" aria-label="Actions">
+          <button class="icon-btn" title="New chat" id="newChatBtn" aria-label="New chat">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button class="icon-btn" title="Toggle theme" id="themeToggle" aria-label="Toggle theme">
+
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="content full">
+        <section id="chatList" class="chat-list" aria-live="polite" aria-label="Conversation">
+          <div id="typing" class="typing hidden">
+            <div class="avatar bot-avatar small">
+              <img src="https://img.icons8.com/windows/64/chatbot.png" alt="chatbot" style="width:16px; height:16px; object-fit:contain;">
+            </div>
+            <div class="bubble typing-bubble" role="status" aria-live="polite" aria-label="Assistant is typing">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <form id="composer" class="composer" autocomplete="off" novalidate>
+        <textarea id="message" class="input" rows="1" placeholder="Type a message" aria-label="Message"></textarea>
+        <button class="send" type="submit" aria-label="Send" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+        </button>
+      </form>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+  </html>

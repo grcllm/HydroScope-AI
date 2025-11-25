@@ -1,0 +1,192 @@
+:root{
+  --transition: 170ms ease;
+}
+
+body:not(.theme-light){
+  --bg:#0b1220;
+  --panel:#0f1830;
+  --muted:#92a3c3;
+  --line:#1c2742;
+  --user1:#2a6bf0;
+  --user2:#4a8cff;
+  --bot-bg:#121b33;
+  --bot-line:#1f2a4a;
+  --accent:#59a5ff;
+  --text:#e8f1ff;
+  --chip:#0f1830;
+}
+
+body.theme-light{
+  --bg:#eef6ff;
+  --panel:#ffffff;
+  --muted:#4a5a78;
+  --line:#d5e3ff;
+  --user1:#2f6df5;
+  --user2:#58a0ff;
+  --bot-bg:#f5f9ff;
+  --bot-line:#d9e7ff;
+  --accent:#2f6df5;
+  --text:#0f1a2e;
+  --chip:#f3f7ff;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial;
+  background: radial-gradient(1200px 600px at 20% -10%, #18325d55 0%, transparent 60%),
+              radial-gradient(1000px 500px at 110% 10%, #0e356055 0%, transparent 60%),
+              var(--bg);
+  color:var(--text);
+  transition: background var(--transition), color var(--transition);
+}
+
+.app-frame{
+  min-height:100vh;
+  max-width:985px;
+  margin:0 auto;
+  display:grid;
+  grid-template-rows:auto 1fr auto auto;
+  position:relative; z-index:1;
+}
+
+.topbar{
+  position:sticky; top:0; z-index:10;
+  display:flex; align-items:center; justify-content:space-between;
+  gap:12px; padding:14px 2px;
+  background:rgba(12,22,42,.4);
+  backdrop-filter: blur(8px);
+  border-bottom:1px solid var(--line);
+}
+.topbar.no-bg{background:transparent; backdrop-filter:none; border-bottom:none}
+.bot-id{display:flex; align-items:center; gap:10px}
+.avatar{width:36px; height:36px; border-radius:999px; display:grid; place-items:center; font-weight:800;}
+.avatar svg{width:18px; height:18px; display:block}
+.avatar img{filter: brightness(0) invert(1); width:100%; height:100%; object-fit:contain;}
+.logo img{filter: brightness(0) invert(1); width:100%; height:100%; object-fit:contain;}
+.bot-avatar{background:linear-gradient(135deg, #1d4ed8, #60a5fa); color:white;}
+.bot-avatar.small{width:28px; height:28px; font-size:.85rem}
+.meta .title{font-weight:700}
+.meta .status{font-size:.85rem; color:var(--muted)}
+.dot{display:inline-block; width:8px; height:8px; border-radius:50%; background:#34d399; margin-right:6px}
+.actions .icon-btn{background:transparent; border:1px solid var(--line); color:var(--text); padding:8px; border-radius:10px; cursor:pointer}
+.actions .icon-btn:hover{border-color:#2e3b61; background:#0f1830}
+
+.content{
+  display:flex; flex-direction:column; gap:10px;
+  padding:10px 0px 0 2px;
+}
+.content.full .chat-list{min-height:calc(100vh - 180px); max-height:calc(100vh - 180px)}
+.chat-list{
+  border:1px solid var(--line);
+  background:linear-gradient(180deg, color-mix(in oklab, var(--panel) 98%, #0000), color-mix(in oklab, var(--panel) 92%, #0000));
+  border-radius:16px;
+  padding:14px;
+  min-height:70vh; max-height:80vh; overflow:auto;
+  box-shadow: 0 10px 40px rgba(0,0,0,.35);
+}
+
+.row{display:flex; gap:10px; margin:6px 0; align-items:center}
+.row.bot{justify-content:flex-start}
+.row.user{justify-content:flex-end}
+.bubble{
+  position:relative;
+  max-width:min(72%, 640px);
+  padding:10px 12px; line-height:1.45;
+  border-radius:16px; font-size:0.85rem;
+  border:1px solid transparent;
+}
+.bot .bubble{background:var(--bot-bg); border-color:var(--bot-line)}
+.user .bubble{background:linear-gradient(135deg, var(--user1), var(--user2)); color:white}
+.row.grouped .avatar{visibility:hidden}
+.row.grouped .bubble{margin-top:2px}
+.time{display:block; margin-top:6px; font-size:.74rem; opacity:.65}
+
+.bot .bubble::after, .user .bubble::after{display:none}
+
+.typing{display:flex; align-items:flex-end; gap:10px; margin:8px 2px}
+.typing.hidden{display:none}
+.typing-bubble{display:inline-flex; align-items:center; gap:6px; padding:10px 12px; border-radius:16px; background:var(--bot-bg); border:1px solid var(--bot-line); font-size:1rem; box-shadow:0 8px 24px rgba(0,0,0,.06)}
+.typing .dot{width:6px; height:6px; background:#cfe1ff; opacity:.7; animation:blink 1.2s infinite}
+.typing .dot:nth-child(2){animation-delay:.2s}
+.typing .dot:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.2} 40%{opacity:1}}
+
+body.theme-light .typing-bubble{background:var(--bot-bg); border:1px solid var(--bot-line); box-shadow:0 8px 24px rgba(0,0,0,.06)}
+
+.suggestions{display:flex; flex-wrap:wrap; gap:8px; padding:8px 12px}
+.chip{background:var(--chip); color:var(--text); border:1px solid var(--line); padding:8px 12px; border-radius:999px; cursor:pointer}
+.chip:hover{border-color:#2e3b61}
+
+.composer{
+  position:sticky; bottom:20px; z-index:10;
+  display:flex; gap:10px; align-items:center; padding:10px 2px;
+  background:transparent; border-top:1px solid var(--line);
+}
+.input{
+  resize:none; max-height:160px; min-height:44px; overflow:auto;
+  flex:1; padding:12px 14px; border-radius:14px; border:1px solid var(--line);
+  background:var(--panel); color:var(--text); outline:none; font-size:0.85rem;
+}
+.input:focus{box-shadow:0 0 0 3px rgba(74,140,255,.15)}
+.send{background:linear-gradient(135deg, var(--user1), var(--user2)); color:#fff; border:none; padding:10px 12px; border-radius:12px; cursor:pointer; box-shadow:0 8px 24px rgba(42,107,240,.35); display:grid; place-items:center; justify-content:center}
+.send svg{width:14px; height:14px}
+.send:active{transform:translateY(1px)}
+.send[disabled]{opacity:.55; cursor:not-allowed; filter:grayscale(10%); box-shadow:none}
+
+.footnote{padding:10px 16px; color:var(--muted); text-align:center}
+
+@media (max-width:700px){
+  .app-frame{max-width:100%}
+  .chat-list{min-height:58vh; max-height:58vh}
+  .content.full .chat-list{min-height:calc(100vh - 210px); max-height:calc(100vh - 210px)}
+}
+
+.landing-top{padding:18px 16px; padding-left:24px}
+.brand-row{margin:0; display:flex; align-items:center; justify-content:flex-start; gap:12px}
+.brand-left{display:flex; align-items:center; gap:10px}
+.logo{width:36px; height:36px; border-radius:10px; display:grid; place-items:center; font-weight:800; color:#fff; background:linear-gradient(135deg, var(--user1), var(--user2))}
+.brand-name{font-weight:800}
+.brand-right{display:flex; align-items:center; gap:8px}
+.primary-ghost{border:1px solid var(--line); padding:10px 14px; border-radius:12px; color:var(--text); text-decoration:none}
+
+.hero{max-width:950px; margin:20px auto 40px; text-align:center; padding:0 16px}
+.pill{display:inline-block; padding:6px 10px; border-radius:999px; font-size:.85rem; color:var(--accent); background:color-mix(in oklab, var(--accent) 15%, #fff); border:1px solid color-mix(in oklab, var(--accent) 25%, #fff); margin-top:30px}
+.hero-title{font-size:clamp(2rem, 6vw, 3.2rem); margin:18px 0; line-height:1.15}
+.hero-sub{max-width:660px; margin:0 auto 18px; color:var(--muted)}
+.hero-cta{display:flex; justify-content:center; gap:10px; margin-bottom:20px}
+.primary{background:linear-gradient(135deg, var(--user1), var(--user2)); color:#fff; padding:12px 18px; border-radius:12px; text-decoration:none; font-weight:700; box-shadow:0 10px 28px rgba(42,107,240,.35); margin:10px 0}
+
+.hero-card{position:relative; background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:20px; margin-top:10px; box-shadow:0 30px 80px rgba(0,0,0,.25)}
+.hero-card .mock{position:relative; z-index:1; max-width:720px; margin:0 auto}
+.hero-card .row{display:flex; gap:10px; margin:8px 0; align-items:center}
+.hero-card .bubble{background:var(--bot-bg); border:1px solid var(--bot-line); border-radius:14px; padding:10px 12px; max-width:75%; position:relative}
+.hero-card .row.user .bubble{background:linear-gradient(135deg, var(--user1), var(--user2)); color:#fff; margin-left:auto}
+.hero-card .row.bot .bubble::after{display:none}
+.hero-card .row.user .bubble::after{display:none}
+.hero-card .circle{position:absolute; right:6%; bottom:12%; width:220px; height:220px; border-radius:999px; background:radial-gradient(circle at 30% 30%, color-mix(in oklab, var(--user2) 55%, #fff), color-mix(in oklab, var(--user1) 12%, #0000)); filter:blur(6px); opacity:.35; z-index:0; pointer-events:none; animation:cardPulseB 7s ease-in-out infinite}
+.hero-card .circle-2{position:absolute; left:8%; top:10%; width:160px; height:160px; border-radius:999px; background:radial-gradient(circle at 60% 40%, color-mix(in oklab, var(--user1) 45%, #fff), color-mix(in oklab, var(--user2) 10%, #0000)); filter:blur(5px); opacity:.28; z-index:0; pointer-events:none; animation:cardPulseA 9s ease-in-out infinite}
+
+
+
+@keyframes cardPulseA{0%,100%{opacity:.24; transform:scale(1)} 50%{opacity:.34; transform:scale(1.05)}}
+@keyframes cardPulseB{0%,100%{opacity:.30; transform:scale(1)} 50%{opacity:.40; transform:scale(1.04)}}
+
+.landing-top, .hero{position:relative; z-index:1}
+.orbs{position:fixed; inset:0; pointer-events:none; z-index:0}
+.orb{position:absolute; border-radius:50%; filter:blur(40px)}
+.orb-a{top:-80px; left:-60px; width:380px; height:380px; background:radial-gradient(circle at 30% 30%, color-mix(in oklab, var(--user2) 55%, #fff), transparent 60%); opacity:.25; animation:pulseA 3.2s ease-in-out infinite}
+.orb-b{right:-80px; bottom:12%; width:520px; height:520px; background:radial-gradient(circle at 70% 40%, color-mix(in oklab, var(--user1) 45%, #fff), transparent 60%); opacity:.18; animation:pulseB 7.2s ease-in-out infinite}
+.orb-c{top:50%; left:50%; width:300px; height:300px; background:radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--accent) 40%, #fff), transparent 60%); opacity:.15; animation:pulseC 5s ease-in-out infinite}
+.orb-d{bottom:20%; left:10%; width:250px; height:250px; background:radial-gradient(circle at 20% 80%, color-mix(in oklab, var(--user1) 50%, #fff), transparent 60%); opacity:.2; animation:pulseD 4s ease-in-out infinite}
+
+@keyframes pulseA{0%,100%{opacity:.22; transform:scale(1)} 50%{opacity:.38; transform:scale(1.06)}}
+@keyframes pulseB{0%,100%{opacity:.15; transform:scale(1)} 50%{opacity:.22; transform:scale(1.04)}}
+@keyframes pulseC{0%,100%{opacity:.12; transform:scale(1)} 50%{opacity:.25; transform:scale(1.05)}}
+@keyframes pulseD{0%,100%{opacity:.18; transform:scale(1)} 50%{opacity:.28; transform:scale(1.04)}}
+
+body.theme-light .orbs .orb-a{background:radial-gradient(circle at 30% 30%, color-mix(in oklab, var(--user2) 55%, #000), transparent 60%); opacity:.35}
+body.theme-light .orbs .orb-b{background:radial-gradient(circle at 70% 40%, color-mix(in oklab, var(--user1) 45%, #000), transparent 60%); opacity:.25}
+body.theme-light .orbs .orb-c{background:radial-gradient(circle at 50% 50%, color-mix(in oklab, var(--accent) 40%, #000), transparent 60%); opacity:.2}
+body.theme-light .orbs .orb-d{background:radial-gradient(circle at 20% 80%, color-mix(in oklab, var(--user1) 50%, #000), transparent 60%); opacity:.3}

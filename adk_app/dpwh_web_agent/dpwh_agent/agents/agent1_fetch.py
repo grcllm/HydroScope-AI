@@ -1,8 +1,10 @@
+from __future__ import annotations
 import os
 import re
 from pathlib import Path
 import pandas as pd
 from dpwh_web_agent.dpwh_agent.utils.schema import normalize_column
+from typing import Optional, List
 
 # Prefer robust, location-independent dataset discovery. Avoid creating directories at import time.
 KAGGLE_FILE = os.environ.get("KAGGLE_FILE", "normalized_dpwh_flood_control_projects.csv")
@@ -18,7 +20,7 @@ def _project_root() -> Path:
             return parent
     return p.parents[-1]
 
-def _candidate_data_dirs() -> list[Path]:
+def _candidate_data_dirs() -> List[Path]:
     """Candidate directories to search for dataset files, in priority order."""
     root = _project_root()
     env_dir = os.environ.get("DATA_DIR")
@@ -30,7 +32,7 @@ def _candidate_data_dirs() -> list[Path]:
     # candidates.append(root / "dpwh_agent" / "data")
     # candidates.append(root / "adk_app" / "dpwh_web_agent" / "dpwh_agent" / "data")
     # De-duplicate while preserving order
-    out: list[Path] = []
+    out: List[Path] = []
     seen = set()
     for p in candidates:
         rp = p.resolve()
@@ -39,7 +41,7 @@ def _candidate_data_dirs() -> list[Path]:
             seen.add(rp)
     return out
 
-def _resolve_dataset_path(file_name: str | None) -> Path:
+def _resolve_dataset_path(file_name: Optional[str]) -> Path:
     """Resolve the dataset path by searching likely locations.
 
     Preference:
@@ -47,7 +49,7 @@ def _resolve_dataset_path(file_name: str | None) -> Path:
     2) cleaned_dpwh_flood_control_projects.csv if present
     3) dpwh_flood_control_projects.csv if present
     """
-    preferred_names: list[str] = []
+    preferred_names: List[str] = []
     if file_name:
         preferred_names.append(file_name)
     # Prefer a known-good normalized file first, then cleaned, then raw

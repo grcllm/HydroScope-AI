@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DPWH Agentic Project</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <header class="landing-top">
+      <div class="brand-row">
+        <div class="brand-left">
+          <div class="logo"><img src="https://img.icons8.com/windows/64/chatbot.png" alt="chatbot" style="width:24px; height:24px; object-fit:contain;"></div>
+          <div class="brand-name">Agent</div>
+        </div>
+        <div class="brand-right"></div>
+      </div>
+    </header>
+
+    <!-- Background animated orbs -->
+    <div class="orbs">
+      <div class="orb orb-a" aria-hidden="true"></div>
+      <div class="orb orb-b" aria-hidden="true"></div>
+    </div>
+
+    <main class="hero">
+      <div class="pill">AI‑Powered Agent</div>
+      <h1 class="hero-title">Your DPWH Agent<br/>is Here</h1>
+      <p class="hero-sub">Get clear, data-driven answers on DPWH flood control projects. Your smart agent keeps insights flowing 24/7.</p>
+      <div class="hero-cta">
+        <a id="startChatBtn" class="primary" href="/chat">Start Chat</a>
+      </div>
+
+      <section class="hero-card">
+        <div class="mock">
+          <div class="row bot">
+            <div class="avatar bot-avatar small"><img src="https://img.icons8.com/windows/64/chatbot.png" alt="chatbot" style="width:16px; height:16px; object-fit:contain;"></div>
+            <div class="bubble">Hi! I'm your DPWH Agent. Ask me anything.</div>
+          </div>
+          <div class="row user">
+            <div class="bubble">What’s the budget trend per year?</div>
+          </div>
+          <div class="row bot">
+            <div class="avatar bot-avatar small"><img src="https://img.icons8.com/windows/64/chatbot.png" alt="chatbot" style="width:16px; height:16px; object-fit:contain;"></div>
+            <div class="bubble">Here’s the total approved budget by year.</div>
+          </div>
+        </div>
+        <div class="circle"></div>
+        <div class="circle-2"></div>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+  </html>

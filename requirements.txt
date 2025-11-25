@@ -5,3 +5,6 @@ google-genai>=1.21.1
 pandas==2.2.3
 pyarrow>=21.0.0
 rapidfuzz==3.9.7
+
+# Web app
+Flask>=3.1.0
