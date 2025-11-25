@@ -5,28 +5,21 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Ensure the repo root is on sys.path so imports like `dpwh_agent.*` and `dpwh_web_agent.*` work
 _HERE = Path(__file__).resolve()
-_REPO_ROOT = _HERE.parents[2]  # <root>/adk_app/dpwh_web_agent/agent.py -> parents[2] = <root>
+_REPO_ROOT = _HERE.parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
     
 load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=True)
 
-# Load .env at repo root if present (GOOGLE_API_KEY, GEMINI_MODEL, etc.)
-# try:
-#     from dotenv import load_dotenv
-#     load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=True)
-# except Exception:
-#     pass
 
 
 from google.adk.agents import Agent  # type: ignore
 
-from dpwh_web_agent import prompt
-from dpwh_web_agent.sub_agents.data_prep.agent import data_prep_agent
-from dpwh_web_agent.sub_agents.analytics.agent import analytics_agent
-from dpwh_web_agent.tools.memory import _load_precreated_dataset
+from . import prompt
+from .sub_agents.data_prep.data_prep_agent import data_prep_agent
+from .sub_agents.analytics.analytics_agent import analytics_agent
+from .tools.memory import _load_precreated_dataset
 
 
 root_agent = Agent(

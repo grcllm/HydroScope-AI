@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 import pandas as pd
-from dpwh_web_agent.dpwh_agent.utils.schema import normalize_column
+from ..utils.schema import normalize_column
 from typing import Optional, List
 
 # Prefer robust, location-independent dataset discovery. Avoid creating directories at import time.

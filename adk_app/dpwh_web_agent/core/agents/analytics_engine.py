@@ -9,9 +9,9 @@ import os
 import pandas as pd
 import re
 import unicodedata
-from dpwh_web_agent.dpwh_agent.utils.schema import find_column
-from dpwh_web_agent.dpwh_agent.utils.text import display_municipality as _display_municipality, normalize_lgu_text as _normalize_lgu_text
-from dpwh_web_agent.dpwh_agent.shared import format_money
+from ..utils.schema import find_column
+from ..utils.text import display_municipality as _display_municipality, normalize_lgu_text as _normalize_lgu_text
+from ..shared import format_money
 
 ROMAN_MAP = {
     "1": "i", "2": "ii", "3": "iii", "4": "iv", "5": "v",
@@ -508,6 +508,22 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
         time_filters = _parse_time_filters(prompt)
         return {"action": "min", "column": "approved_budget_num", "filters": filters, "top_n": top_n, "time": time_filters}
 
+    # Top/largest/biggest projects by budget (generic patterns)
+    # Matches: "show me top 5 projects", "what are the largest projects", "biggest projects in rizal"
+    if re.search(r"(top|largest|biggest)\s+(\d+\s+)?projects?\s*(by budget|in)?", p) or \
+       re.search(r"(show|give|list)\s+(me\s+)?(the\s+)?(top|largest)\s+\d*\s*projects?", p) or \
+       ("what are the largest projects" in p or "what are the biggest projects" in p):
+        filters = detect_filters(prompt, df)
+        top_n = _parse_top_n(prompt) or 5
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "max", "column": "approved_budget_num", "filters": filters, "top_n": top_n, "time": time_filters}
+
+    # Average budget pattern
+    if "average" in p and "budget" in p:
+        filters = detect_filters(prompt, df)
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "average", "column": "approved_budget_num", "filters": filters, "time": time_filters}
+
     # List projects by location – interpret as "top 5 by highest approved budget in <place>"
     # Also accept: "give me all <N> projects in <place>"
     if ("list" in p and "project" in p and "in" in p) or re.search(r"list all .*projects", p) or re.search(r"give me all\s+\d+\s+projects\s+in", p):
@@ -712,6 +728,12 @@ def simple_parse(prompt: str, df: pd.DataFrame) -> dict:
     project_id_pattern = re.match(r"^([a-z0-9\-]{6,20})$", p.strip())
     if project_id_pattern:
         return {"action": "lookup", "filters": {"project_id": project_id_pattern.group(1)}, "column": None}
+
+    # FALLBACK: If we detected any filters but no explicit action, default to showing top projects by budget in that location
+    filters = detect_filters(prompt, df)
+    if filters and any(k in filters for k in ("municipality", "province", "region", "project_location")):
+        time_filters = _parse_time_filters(prompt)
+        return {"action": "max", "column": "approved_budget_num", "filters": filters, "top_n": 5, "time": time_filters}
 
     return {"action": "unknown", "filters": {}}
 
@@ -1130,6 +1152,8 @@ def _clarify_message(parsed: dict, df: pd.DataFrame) -> str:
         parts.append(f"find the lowest approved budget" + (f" (top {top_n})" if top_n and top_n>1 else ""))
     elif action == "sum":
         parts.append("compute the total approved budget")
+    elif action == "average":
+        parts.append("compute the average approved budget")
     elif action == "count":
         parts.append("count the number of projects")
     elif action == "top_contractors":
@@ -1483,6 +1507,31 @@ def agent3_run(question: str, df: pd.DataFrame) -> str:
         if filters:
             return f"The total approved budget{_place_context(filters)} is ₱{total:,.2f}."
         return f"The total approved budget for all projects is ₱{total:,.2f}."
+    
+    # Average budget
+    if action == "average" and parsed["column"]:
+        budget_col = find_column(sub, ['approved_budget_num', 'approved_budget_for_contract', 'approvedbudgetforcontract', 'approved_budget', 'budget', 'contractcost', 'approved budget for contract'])
+        
+        if budget_col is None:
+            return "I couldn't find a budget column in the dataset."
+        
+        if sub.empty:
+            return "I couldn't find any matching projects for your request."
+        
+        # Coerce to numeric and drop invalid values
+        sub_num = sub.copy()
+        sub_num[budget_col] = pd.to_numeric(sub_num[budget_col], errors='coerce')
+        valid = sub_num.dropna(subset=[budget_col])
+        
+        if valid.empty:
+            return f"No valid budget data found{_place_context(filters)}."
+        
+        avg = valid[budget_col].mean()
+        count = len(valid)
+        
+        if filters:
+            return f"The average approved budget{_place_context(filters)} is ₱{avg:,.2f} across {count} project(s)."
+        return f"The average approved budget for all projects is ₱{avg:,.2f} across {count} project(s)."
     
     # Minimum budget
     if action == "min" and parsed["column"]:

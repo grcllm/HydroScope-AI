@@ -8,7 +8,7 @@ ADK web app for analytics on DPWH flood control projects. The ADK entrypoint is 
 ```bat
 python -m venv .venv
 .venv\Scripts\activate
- pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
 2) Configure your environment in `.env` (repo root):
@@ -17,7 +17,13 @@ GOOGLE_API_KEY=your_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
 ```
 
-3) Run the ADK Web UI (preferred):
+3) **Run the Flask Web App** (recommended for chat interface):
+```bat
+python app.py
+```
+Then open **http://localhost:3000** in your browser.
+
+4) **Or run the ADK Web UI** (for direct agent testing):
 ```bat
 adk web run dpwh_web_agent.agent:root_agent
 ```
@@ -70,14 +76,42 @@ Here are the main packages used at runtime:
 You can install these with `pip install -r requirements.txt` (the `bootstrap` Makefile target does this for you).
 
 
-## Project layout
+## Project layout (Refactored - Clean Structure)
 
-- `adk_app/dpwh_web_agent/agent.py` – main ADK entry
-- `adk_app/dpwh_web_agent/sub_agents/` – data prep and analytics sub-agents
-- `adk_app/dpwh_web_agent/dpwh_agent/` – co-located core logic (agents, utils, tools)
-- `dpwh_agent/data/` – CSV dataset files (kept as data-only)
+```
+adk_app/
+  dpwh_web_agent/              # Main package
+    agent.py                   # ADK entry point
+    prompt.py                  # Agent prompts
+    
+    core/                      # Core business logic
+      shared.py                # Shared utilities
+      agents/                  # Agent implementations
+        dataset_loader.py      # Dataset loading & normalization
+        data_processor.py      # Data processing & parsing
+        analytics_engine.py    # Analytics & question answering
+      utils/                   # Helper utilities
+        schema.py              # Schema utilities
+        text.py                # Text processing
+      data/                    # CSV datasets
+    
+    sub_agents/                # ADK sub-agents
+      analytics/
+        analytics_agent.py     # Analytics sub-agent
+      data_prep/
+        data_prep_agent.py     # Data preparation sub-agent
+    
+    tools/                     # Tool functions
+      analytics_tools.py       # Main analytics tools API
+      memory.py                # Dataset initialization
+```
 
-Legacy code (CLI orchestrator and old ADK-style shim) has been removed/deprecated in favor of the ADK web app. Top-level `dpwh_agent` package is now a stub that raises an ImportError to prevent accidental imports; use `dpwh_web_agent.dpwh_agent` instead.
+**Key improvements:**
+- ✅ Descriptive file names (what each does is clear)
+- ✅ All imports use relative paths
+- ✅ Flattened structure (removed nested redundancy)
+- ✅ Easy navigation in IDE
+- ✅ No import confusion during refactoring
 
 ## Notes
 

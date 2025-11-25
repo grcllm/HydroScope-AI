@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from google.adk.agents import Agent  # type: ignore
 
-from dpwh_web_agent.dpwh_agent.agentic import tools as dpwh_tools
+from ...tools import analytics_tools as dpwh_tools
 
 
 analytics_agent = Agent(

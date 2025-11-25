@@ -13,12 +13,14 @@ _ADK_APP = _REPO_ROOT / "adk_app"
 if str(_ADK_APP) not in sys.path:
     sys.path.insert(0, str(_ADK_APP))
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session
 from typing import Any, Optional
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
+import secrets
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
 
 
 @app.route("/")
@@ -37,14 +39,19 @@ def chat_page():
 def api_chat():
     """Proxy chat requests to the ADK agent if available.
 
-    Expects JSON: { "message": "..." }
-    Returns JSON: { "reply": "...", "timestamp": "ISO" }
+    Expects JSON: { "message": "...", "session_id": "..." (optional) }
+    Returns JSON: { "reply": "...", "timestamp": "ISO", "session_id": "..." }
     """
     data = request.get_json(silent=True) or {}
     user_msg: str = (data.get("message") or "").strip()
     if not user_msg:
-        return jsonify({"reply": "Please type a message to begin.", "timestamp": datetime.utcnow().isoformat()}), 200
+        return jsonify({"reply": "Please type a message to begin.", "timestamp": datetime.now(timezone.utc).isoformat()}), 200
 
+    # Get or create session ID
+    session_id = data.get("session_id") or session.get("chat_session_id")
+    if not session_id:
+        session_id = f"web-{secrets.token_hex(8)}"
+        session["chat_session_id"] = session_id
 
     if user_msg:
         user_msg = user_msg.replace('budjet', 'budget').replace('tren', 'trend').replace('regin', 'region')
@@ -60,13 +67,10 @@ def api_chat():
 
     if not reply_text:
         try:
-            import importlib  
             _ensure_dpwh_dataset()
-            try:
-                dpwh_tools = importlib.import_module("dpwh_web_agent.dpwh_agent.agentic.tools")
-            except Exception:
-                dpwh_tools = importlib.import_module("adk_app.dpwh_web_agent.dpwh_agent.agentic.tools")
-            reply_text = getattr(dpwh_tools, "answer_dpwh_question")(user_msg)
+            from adk_app.dpwh_web_agent.tools import analytics_tools
+            # Pass session_id for context tracking
+            reply_text = analytics_tools.answer_dpwh_question(user_msg, session_id=session_id)
             if reply_text:
                 print("[api_chat] Reply from dpwh tools" , flush=True)
         except Exception as e:
@@ -90,16 +94,17 @@ def api_chat():
         canned_openers = [
             "Here's a helpful response:",
             "Got it!",
-            "Thanks for your message.",
+            "Thanks for your message:",
             "Let me help with that.",
         ]
         opener = canned_openers[len(user_msg) % len(canned_openers)]
-        reply_text = f"{opener} You said: ‘{user_msg}’. This is a simulated reply (ADK not available)."
+        reply_text = f"{opener} You said: '{user_msg}'. This is a simulated reply (ADK not available)."
         print("[api_chat] Falling back to simulated reply", flush=True)
 
     return jsonify({
         "reply": reply_text,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "session_id": session_id,
     }), 200
 
 _DATASET_INIT_LOCK = threading.Lock()
@@ -114,29 +119,19 @@ def _ensure_dpwh_dataset() -> None:
         if _DATASET_READY:
             return
         try:
-            import importlib  
-            try:
-                mem_mod = importlib.import_module("dpwh_web_agent.tools.memory")
-            except Exception:
-                mem_mod = importlib.import_module("adk_app.dpwh_web_agent.tools.memory")
-            _load_precreated_dataset = getattr(mem_mod, "_load_precreated_dataset")
+            from adk_app.dpwh_web_agent.tools.memory import _load_precreated_dataset
             _load_precreated_dataset()
             _DATASET_READY = True
             print("[dataset] Initialized via memory callback", flush=True)
         except Exception as e:
             print(f"[dataset] memory callback failed: {e}", flush=True)
             try:
-                import importlib  
                 import pandas as pd  
-                try:
-                    agent1_fetch = importlib.import_module("dpwh_web_agent.dpwh_agent.agents.agent1_fetch")
-                    tools_mod = importlib.import_module("dpwh_web_agent.dpwh_agent.agentic.tools")
-                except Exception:
-                    agent1_fetch = importlib.import_module("adk_app.dpwh_web_agent.dpwh_agent.agents.agent1_fetch")
-                    tools_mod = importlib.import_module("adk_app.dpwh_web_agent.dpwh_agent.agentic.tools")
-                csv_path = getattr(agent1_fetch, "agent1_run")()
+                from adk_app.dpwh_web_agent.core.agents.dataset_loader import agent1_run
+                from adk_app.dpwh_web_agent.tools import analytics_tools
+                csv_path = agent1_run()
                 df = pd.read_csv(csv_path)
-                getattr(tools_mod, "set_dataframe")(df)
+                analytics_tools.set_dataframe(df)
                 _DATASET_READY = True
                 print(f"[dataset] Initialized from CSV: {csv_path}", flush=True)
             except Exception as e2:
@@ -152,8 +147,7 @@ def _ask_root_agent(message: str) -> Optional[str]:
     if not message or not message.strip():
         return None
     try:
-        import importlib  
-        root_agent = getattr(importlib.import_module("dpwh_web_agent.agent"), "root_agent")  
+        from adk_app.dpwh_web_agent.agent import root_agent
     except Exception:
         return None
 

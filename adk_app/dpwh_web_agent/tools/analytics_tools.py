@@ -4,6 +4,7 @@ Design goals:
 - Keep a single source of truth for analytics by delegating to Agent 3
 - Provide both a generic question-answer tool and a few structured helpers
 - Be scalable: adding granular tools later won't break existing ones
+- Support conversation context for follow-up questions
 """
 from __future__ import annotations
 
@@ -13,16 +14,31 @@ import re
 
 import pandas as pd
 
-from dpwh_web_agent.dpwh_agent.agents.agent3_answer import (
+from ..core.agents.analytics_engine import (
     agent3_run,
     find_project_id_column,
+    simple_parse,
 )
-from dpwh_web_agent.dpwh_agent.agents.agent3_answer import _set_pagination, _PAGINATION_STATE
-from dpwh_web_agent.dpwh_agent.utils.schema import find_column
+from ..core.agents.analytics_engine import _set_pagination, _PAGINATION_STATE
+from ..core.utils.schema import find_column
+from ..core.utils.context_db import (
+    get_or_create_session,
+    log_conversation,
+    update_context,
+    get_context,
+    clear_context,
+)
+from ..core.utils.context_extractor import (
+    extract_context_from_question,
+    apply_context_to_question,
+    should_clear_context,
+    get_contextual_summary,
+)
 
 
 _DF_LOCK = threading.Lock()
 _CURRENT_DF: Optional[pd.DataFrame] = None
+_CURRENT_SESSION: Optional[str] = None
 
 
 def set_dataframe(df: pd.DataFrame) -> None:
@@ -30,6 +46,20 @@ def set_dataframe(df: pd.DataFrame) -> None:
     global _CURRENT_DF
     with _DF_LOCK:
         _CURRENT_DF = df
+
+
+def set_session(session_id: str) -> None:
+    """Set the current session ID for context tracking."""
+    global _CURRENT_SESSION
+    _CURRENT_SESSION = get_or_create_session(session_id)
+
+
+def get_session() -> str:
+    """Get or create the current session ID."""
+    global _CURRENT_SESSION
+    if _CURRENT_SESSION is None:
+        _CURRENT_SESSION = get_or_create_session()
+    return _CURRENT_SESSION
 
 
 def _require_df() -> pd.DataFrame:
@@ -122,16 +152,131 @@ def _parse_years_input(year_str: str) -> Optional[List[int]]:
     return None
 
 
-def answer_dpwh_question(question: str) -> str:
+def answer_dpwh_question(question: str, session_id: Optional[str] = None) -> str:
     """Answer a natural language question about DPWH flood control projects.
+    
+    Supports conversation context - remembers previous questions about locations,
+    contractors, etc., so users can ask follow-up questions naturally.
 
     Args:
         question: The user's question in natural language.
+        session_id: Optional session ID for context tracking. If None, uses/creates default session.
 
     Returns:
         A concise, factual answer computed from the dataset. Use pesos (₱) for money.
     """
-    return _agent_answer(question)
+    # Get or create session
+    if session_id:
+        set_session(session_id)
+    sid = get_session()
+    
+    # Handle greetings
+    q_lower = question.lower().strip()
+    greetings = ['hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening']
+    if any(q_lower.startswith(g) for g in greetings) or q_lower in greetings:
+        response = (
+            "👋 Hi! I'm your DPWH Flood Control Analytics Agent.\n\n"
+            "I can help you analyze data about Department of Public Works and Highways (DPWH) flood control projects across the Philippines.\n\n"
+            "Ask me about:\n"
+            "• Project counts and locations\n"
+            "• Budget totals and trends\n"
+            "• Top contractors\n"
+            "• Specific project details\n\n"
+            "Type 'what questions can you answer?' to see examples!"
+        )
+        log_conversation(sid, question, response)
+        return response
+    
+    # Handle help/capability requests
+    help_patterns = [
+        'what questions can you answer',
+        'what can you do',
+        'what can i ask',
+        'help',
+        'capabilities',
+        'what are you capable of',
+        'show me examples',
+        'sample questions'
+    ]
+    if any(pattern in q_lower for pattern in help_patterns):
+        response = (
+            "📊 Here are some questions I can answer:\n\n"
+            "PROJECT COUNTS:\n"
+            "• How many flood control projects are there?\n"
+            "• How many projects are in Region III?\n"
+            "• Count projects in Quezon City\n\n"
+            "BUDGET ANALYTICS:\n"
+            "• What is the total budget for all projects?\n"
+            "• Show budget trend by year\n"
+            "• What's the average project budget?\n\n"
+            "CONTRACTOR RANKINGS:\n"
+            "• Which contractor has the highest total budget?\n"
+            "• List top 10 contractors by project count\n"
+            "• Find projects by contractor name [NAME]\n\n"
+            "PROJECT DETAILS:\n"
+            "• Show me the top 5 projects by budget\n"
+            "• Find projects in Metro Manila\n"
+            "• What are the largest projects?\n\n"
+            "💡 TIP: I remember context! Ask about a city, then follow up with 'What's the total budget?' "
+            "and I'll know you mean that city.\n\n"
+            "Just ask naturally - I'll understand!"
+        )
+        log_conversation(sid, question, response)
+        return response
+    
+    # Check if we should clear context (new topic)
+    if should_clear_context(question):
+        clear_context(sid)
+    
+    # Get stored context
+    context = get_context(sid)
+    
+    # Apply context to question if needed
+    original_question = question
+    if context:
+        question = apply_context_to_question(question, context)
+        # If question was enhanced, add a note about using context
+        if question != original_question:
+            context_summary = get_contextual_summary(context)
+            # We'll add this to the response later
+    
+    # Get the answer
+    df = _require_df()
+    response = _agent_answer(question)
+    
+    # Extract and store context from this question
+    try:
+        parsed = simple_parse(question, df)
+        extracted_context = extract_context_from_question(question, parsed, df)
+        
+        # Special handling for project lookups - extract contractor from response
+        if parsed.get('action') in ['lookup', 'contractor_lookup'] and 'contractor' not in extracted_context:
+            # Try to extract contractor name from the response
+            contractor_match = re.search(r'contractor.*?is\s+([A-Z][A-Z\s/\-&.,()]+?)(?:\.|$)', response, re.IGNORECASE | re.MULTILINE)
+            if contractor_match:
+                contractor_name = contractor_match.group(1).strip()
+                # Clean up common trailing patterns
+                contractor_name = re.sub(r'\s*\(FORMERLY:.*?\)\s*$', '', contractor_name, flags=re.IGNORECASE).strip()
+                extracted_context['contractor'] = contractor_name
+        
+        # Extract project ID from responses (for follow-up questions like "who is the contractor")
+        if 'project_id' not in extracted_context:
+            # Look for patterns like "Project ID P00620087LZ" or "project with the highest budget is Project ID P00620087LZ"
+            project_id_match = re.search(r'[Pp]roject\s+(?:ID\s+)?([A-Z0-9]{6,20})\b', response)
+            if project_id_match:
+                extracted_context['last_project_id'] = project_id_match.group(1)
+        
+        if extracted_context:
+            update_context(sid, extracted_context)
+            # Log conversation with extracted context
+            log_conversation(sid, original_question, response, extracted_context)
+        else:
+            log_conversation(sid, original_question, response)
+    except Exception:
+        # If context extraction fails, still log the conversation
+        log_conversation(sid, original_question, response)
+    
+    return response
 
 
 def lookup_project(project_id: str) -> str:

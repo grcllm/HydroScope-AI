@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dpwh_web_agent.dpwh_agent.agents.agent1_fetch import agent1_run
-from dpwh_web_agent.dpwh_agent.agentic import tools as dpwh_tools
+from ..core.agents.dataset_loader import agent1_run
+from . import analytics_tools as dpwh_tools
 
 
 def _load_precreated_dataset(*args, **kwargs) -> None:

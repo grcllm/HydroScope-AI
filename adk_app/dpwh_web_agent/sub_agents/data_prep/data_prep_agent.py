@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from google.adk.agents import Agent  # type: ignore
 
-from dpwh_web_agent.dpwh_agent.agents.agent1_fetch import agent1_run
-from dpwh_web_agent.dpwh_agent.agentic import tools as dpwh_tools
+from ...core.agents.dataset_loader import agent1_run
+from ...tools import analytics_tools as dpwh_tools
 import pandas as pd
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 import pandas as pd
 
-from dpwh_web_agent.dpwh_agent.utils.schema import find_column
+from .utils.schema import find_column
 
 
 def find_project_id_column(df: pd.DataFrame) -> Optional[str]:
