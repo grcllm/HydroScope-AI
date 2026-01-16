@@ -1,6 +1,61 @@
-# DPWH Agentic Web (Gemini)
+# DPWH Agentic Analytics Platform
 
-ADK web app for analytics on DPWH flood control projects. The ADK entrypoint is `dpwh_web_agent.agent:root_agent` and uses the Gemini Developer API (GOOGLE_API_KEY).
+An intelligent conversational analytics platform for querying and analyzing Department of Public Works and Highways (DPWH) flood control project data using natural language. Built with Google's Gemini AI and Flask, this system provides an intuitive chat interface that understands context, remembers conversation history, and delivers precise insights about infrastructure projects across the Philippines.
+
+## What It Does
+
+This platform transforms complex CSV datasets into an interactive Q&A experience. Users can ask natural language questions like "What's the total budget for projects in Manila?" or "Who are the top contractors in Region 3?" and receive accurate, data-driven answers. The system intelligently handles follow-up questions, maintains conversation context across sessions, and provides paginated results for large datasets.
+
+**Key Capabilities:**
+- 🗣️ **Natural Language Queries**: Ask questions in plain English about projects, budgets, contractors, and locations
+- 🧠 **Conversation Memory**: SQLite-based context system remembers your conversation and applies relevant context to follow-up questions
+- 🔄 **Smart Follow-ups**: Handles implicit references like "show me more", "what's the total budget?", or "who is the contractor?"
+- 📊 **Advanced Analytics**: Count projects, sum budgets, find top contractors, filter by location/year, calculate averages
+- 🎯 **Entity Recognition**: Automatically extracts cities, regions, contractors, years, and project IDs from questions and responses
+- 📄 **Pagination Support**: Browse large result sets with "more projects" or "next page" commands
+- 🔍 **Fuzzy Matching**: Tolerant of misspellings and variations in location/contractor names
+- 🌐 **Dual Interface**: Web chat UI (Flask) and ADK Web UI for testing
+
+## How It Works
+
+The system uses a multi-agent architecture powered by Google's Gemini API:
+
+1. **Root Agent**: Orchestrates the conversation, understands user intent, and delegates to specialized sub-agents
+2. **Analytics Agent**: Parses natural language queries into structured filters (location, year, contractor, action)
+3. **Data Processing Agent**: Loads and normalizes DPWH CSV datasets, handles fuzzy matching
+4. **Context System**: Extracts entities from questions/responses and applies them to follow-up queries automatically
+
+**Technical Architecture:**
+```
+User Question → Root Agent → Analytics Engine → Data Processor → Response
+                     ↓                               ↓
+              Context Extractor → SQLite Database ← Session Manager
+```
+
+The conversation context system stores:
+- **Sessions**: Unique user sessions with timestamps
+- **Conversations**: Full Q&A history with parsed actions
+- **Context Store**: Active entities (locations, contractors, project IDs, years)
+
+This enables natural conversations like:
+```
+User: "What are the top projects in Manila?"
+Bot: [Lists Manila projects]
+User: "What's the total budget?"
+Bot: [Calculates total for Manila projects - context applied automatically]
+User: "Show me Quezon City instead"
+Bot: [Switches context to Quezon City - old context cleared]
+```
+
+## Technology Stack
+
+- **AI/ML**: Google Gemini 2.5 Flash (via google-genai SDK)
+- **Backend**: Python 3.10+, Flask web framework
+- **Database**: SQLite3 (conversation context and session management)
+- **Data Processing**: pandas, pyarrow (optional for parquet caching)
+- **Fuzzy Matching**: rapidfuzz (location/contractor name matching)
+- **Configuration**: python-dotenv for environment management
+- **Architecture**: ADK (Agent Development Kit) framework with tool-based delegation
 
 ## Quick start (Windows CMD)
 
@@ -8,7 +63,7 @@ ADK web app for analytics on DPWH flood control projects. The ADK entrypoint is 
 ```bat
 python -m venv .venv
 .venv\Scripts\activate
- pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
 2) Configure your environment in `.env` (repo root):
@@ -17,7 +72,13 @@ GOOGLE_API_KEY=your_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
 ```
 
-3) Run the ADK Web UI (preferred):
+3) **Run the Flask Web App** (recommended for chat interface):
+```bat
+python app.py
+```
+Then open **http://localhost:3000** in your browser.
+
+4) **Or run the ADK Web UI** (for direct agent testing):
 ```bat
 adk web run dpwh_web_agent.agent:root_agent
 ```
@@ -70,14 +131,42 @@ Here are the main packages used at runtime:
 You can install these with `pip install -r requirements.txt` (the `bootstrap` Makefile target does this for you).
 
 
-## Project layout
+## Project layout (Refactored - Clean Structure)
 
-- `adk_app/dpwh_web_agent/agent.py` – main ADK entry
-- `adk_app/dpwh_web_agent/sub_agents/` – data prep and analytics sub-agents
-- `adk_app/dpwh_web_agent/dpwh_agent/` – co-located core logic (agents, utils, tools)
-- `dpwh_agent/data/` – CSV dataset files (kept as data-only)
+```
+adk_app/
+  dpwh_web_agent/              # Main package
+    agent.py                   # ADK entry point
+    prompt.py                  # Agent prompts
+    
+    core/                      # Core business logic
+      shared.py                # Shared utilities
+      agents/                  # Agent implementations
+        dataset_loader.py      # Dataset loading & normalization
+        data_processor.py      # Data processing & parsing
+        analytics_engine.py    # Analytics & question answering
+      utils/                   # Helper utilities
+        schema.py              # Schema utilities
+        text.py                # Text processing
+      data/                    # CSV datasets
+    
+    sub_agents/                # ADK sub-agents
+      analytics/
+        analytics_agent.py     # Analytics sub-agent
+      data_prep/
+        data_prep_agent.py     # Data preparation sub-agent
+    
+    tools/                     # Tool functions
+      analytics_tools.py       # Main analytics tools API
+      memory.py                # Dataset initialization
+```
 
-Legacy code (CLI orchestrator and old ADK-style shim) has been removed/deprecated in favor of the ADK web app. Top-level `dpwh_agent` package is now a stub that raises an ImportError to prevent accidental imports; use `dpwh_web_agent.dpwh_agent` instead.
+**Key improvements:**
+- ✅ Descriptive file names (what each does is clear)
+- ✅ All imports use relative paths
+- ✅ Flattened structure (removed nested redundancy)
+- ✅ Easy navigation in IDE
+- ✅ No import confusion during refactoring
 
 ## Notes
 
@@ -118,6 +207,11 @@ adk web run dpwh_web_agent.agent:root_agent > NUL 2>&1
 	- File: `adk_app/dpwh_web_agent/dpwh_agent/agents/agent1_fetch.py` (only when running as script) — remove or lower the verbosity of the `print(f"\nSuccess! Dataset ready at: {path}")` used in the `__main__` test block.
 
 	After this change you can control visibility by configuring the logging level in your entrypoint (for example, in `agent.py` or before starting ADK).
+
+- Minimum effort alternative: change the `print(...)` to `#` comment to simply mute the line if you prefer editing directly.
+
+These options let you keep useful debugging messages during development while silencing the few prints in production or CI.
+
 
 - Minimum effort alternative: change the `print(...)` to `#` comment to simply mute the line if you prefer editing directly.
 
